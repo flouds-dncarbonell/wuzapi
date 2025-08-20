@@ -44,7 +44,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"test_user\",\n  \"token\": \"user_token\",\n  \"webhook\": \"https://webhook.site/1234567890\",\n  \"events\": \"All\",\n  \"proxyConfig\": {\n    \"enabled\": true,\n    \"proxyURL\": \"socks5://user:pass@host:port\"\n  }, \n  \"s3Config\": {\n    \"enabled\": true,\n    \"endpoint\": \"https://s3.amazonaws.com\",\n    \"region\": \"us-east-1\",\n    \"bucket\": \"my-bucket\",\n    \"accessKey\": \"AKIAIOSFODNN7EXAMPLE\",\n    \"secretKey\": \"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\",\n    \"pathStyle\": false,\n    \"publicURL\": \"https://cdn.meusite.com\",\n    \"mediaDelivery\": \"both\",\n    \"retentionDays\": 30\n  }\n}"
+              "raw": "{\n  \"name\": \"test_user\",\n  \"token\": \"user_token\",\n  \"proxyConfig\": {\n    \"enabled\": true,\n    \"proxyURL\": \"socks5://user:pass@host:port\"\n  }, \n  \"s3Config\": {\n    \"enabled\": true,\n    \"endpoint\": \"https://s3.amazonaws.com\",\n    \"region\": \"us-east-1\",\n    \"bucket\": \"my-bucket\",\n    \"accessKey\": \"AKIAIOSFODNN7EXAMPLE\",\n    \"secretKey\": \"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\",\n    \"pathStyle\": false,\n    \"publicURL\": \"https://cdn.meusite.com\",\n    \"mediaDelivery\": \"both\",\n    \"retentionDays\": 30\n  }\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/admin/users",
@@ -340,12 +340,12 @@
               "host": ["{{baseUrl}}"],
               "path": ["webhook"]
             },
-            "description": "Get webhook"
+            "description": "List webhooks"
           },
           "response": []
         },
         {
-          "name": "Set Webhook",
+          "name": "Create Webhook",
           "request": {
             "method": "POST",
             "header": [
@@ -360,14 +360,14 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"WebhookURL\": \"https://example.net/webhook\",\n  \"Events\": [\"Message\", \"ReadReceipt\"]\n}"
+              "raw": "{\n  \"url\": \"https://example.net/webhook\",\n  \"events\": [\"Message\", \"ReadReceipt\"]\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/webhook",
               "host": ["{{baseUrl}}"],
               "path": ["webhook"]
             },
-            "description": "Set webhook"
+            "description": "Create webhook"
           },
           "response": []
         },
@@ -382,9 +382,9 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/webhook",
+              "raw": "{{baseUrl}}/webhook/{{webhookId}}",
               "host": ["{{baseUrl}}"],
-              "path": ["webhook"]
+              "path": ["webhook", "{{webhookId}}"]
             },
             "description": "Delete webhook"
           },
@@ -406,12 +406,12 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"WebhookURL\": \"https://example.net/webhook\",\n  \"Events\": [\"Message\", \"ReadReceipt\"],\n  \"active\": true\n}"
+              "raw": "{\n  \"url\": \"https://example.net/webhook\",\n  \"events\": [\"Message\", \"ReadReceipt\"]\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/webhook/update",
+              "raw": "{{baseUrl}}/webhook/{{webhookId}}",
               "host": ["{{baseUrl}}"],
-              "path": ["webhook", "update"]
+              "path": ["webhook", "{{webhookId}}"]
             },
             "description": "Update webhook"
           },

@@ -61,92 +61,16 @@ func sendToGlobalWebHook(jsonData []byte, token string, userID string) {
 	}
 }
 
-func sendToUserWebHook(webhookurl string, path string, jsonData []byte, userID string, token string) {
-
-	instance_name := ""
-	userinfo, found := userinfocache.Get(token)
-	if found {
-		instance_name = userinfo.(Values).Get("Name")
-	}
-	data := map[string]string{
-		"jsonData":     string(jsonData),
-		"token":        token,
-		"instanceName": instance_name,
-	}
-
-	log.Debug().Interface("webhookData", data).Msg("Data being sent to webhook")
-
-	if webhookurl != "" {
-		log.Info().Str("url", webhookurl).Msg("Calling user webhook")
-		if path == "" {
-			go callHook(webhookurl, data, userID)
-		} else {
-			// Create a channel to capture the error from the goroutine
-			errChan := make(chan error, 1)
-			go func() {
-				err := callHookFile(webhookurl, data, userID, path)
-				errChan <- err
-			}()
-
-			// Optionally handle the error from the channel (if needed)
-			if err := <-errChan; err != nil {
-				log.Error().Err(err).Msg("Error calling hook file")
-			}
-		}
-	} else {
-		log.Warn().Str("userid", userID).Msg("No webhook set for user")
-	}
-}
-
 func updateAndGetUserSubscriptions(mycli *MyClient) ([]string, error) {
-	// Get updated events from cache/database
-	currentEvents := ""
-	userinfo2, found2 := userinfocache.Get(mycli.token)
-	if found2 {
-		currentEvents = userinfo2.(Values).Get("Events")
-	} else {
-		// If not in cache, get from database
-		if err := mycli.db.Get(&currentEvents, "SELECT events FROM users WHERE id=$1", mycli.userID); err != nil {
-			log.Warn().Err(err).Str("userID", mycli.userID).Msg("Could not get events from DB")
-			return nil, err // Propagate the error
-		}
+	subscribedEvents, err := getUserSubscribedEvents(mycli.db, mycli.userID)
+	if err != nil {
+		return nil, err
 	}
-
-	// Update client subscriptions if changed
-	eventarray := strings.Split(currentEvents, ",")
-	var subscribedEvents []string
-	if len(eventarray) == 1 && eventarray[0] == "" {
-		subscribedEvents = []string{}
-	} else {
-		for _, arg := range eventarray {
-			arg = strings.TrimSpace(arg)
-			if arg != "" && Find(supportedEventTypes, arg) {
-				subscribedEvents = append(subscribedEvents, arg)
-			}
-		}
-	}
-
-	// Update the client subscriptions
 	mycli.subscriptions = subscribedEvents
-
 	return subscribedEvents, nil
 }
 
-func getUserWebhookUrl(token string) string {
-	webhookurl := ""
-	myuserinfo, found := userinfocache.Get(token)
-	if !found {
-		log.Warn().Str("token", token).Msg("Could not call webhook as there is no user for this token")
-	} else {
-		webhookurl = myuserinfo.(Values).Get("Webhook")
-	}
-	return webhookurl
-}
-
 func sendEventWithWebHook(mycli *MyClient, postmap map[string]interface{}, path string) {
-	webhookurl := getUserWebhookUrl(mycli.token)
-
-	// Get updated events from cache/database
 	subscribedEvents, err := updateAndGetUserSubscriptions(mycli)
 	if err != nil {
 		return
@@ -178,8 +102,8 @@ func sendEventWithWebHook(mycli *MyClient, postmap map[string]interface{}, path 
 		return
 	}
 
-	// Call user webhook if configured
-	sendToUserWebHook(webhookurl, path, jsonData, mycli.userID, mycli.token)
+	// Call user webhooks if configured
+	dispatchUserWebhooks(mycli.db, mycli.userID, mycli.token, eventType, jsonData, path)
 
 	// Get global webhook if configured
 	go sendToGlobalWebHook(jsonData, mycli.token, mycli.userID)
@@ -201,7 +125,7 @@ func checkIfSubscribedToEvent(subscribedEvents []string, eventType string, userI
 
 // Connects to Whatsapp Websocket on server startup if last state was connected
 func (s *server) connectOnStartup() {
-	rows, err := s.db.Queryx("SELECT id,name,token,jid,webhook,events,proxy_url,CASE WHEN s3_enabled THEN 'true' ELSE 'false' END AS s3_enabled,media_delivery FROM users WHERE connected=1")
+	rows, err := s.db.Queryx("SELECT id,name,token,jid,proxy_url,CASE WHEN s3_enabled THEN 'true' ELSE 'false' END AS s3_enabled,media_delivery FROM users WHERE connected=1")
 	if err != nil {
 		log.Error().Err(err).Msg("DB Problem")
 		return
@@ -212,12 +136,10 @@ func (s *server) connectOnStartup() {
 		token := ""
 		jid := ""
 		name := ""
-		webhook := ""
-		events := ""
 		proxy_url := ""
 		s3_enabled := ""
 		media_delivery := ""
-		err = rows.Scan(&txtid, &name, &token, &jid, &webhook, &events, &proxy_url, &s3_enabled, &media_delivery)
+		err = rows.Scan(&txtid, &name, &token, &jid, &proxy_url, &s3_enabled, &media_delivery)
 		if err != nil {
 			log.Error().Err(err).Msg("DB Problem")
 			return
@@ -227,34 +149,14 @@ func (s *server) connectOnStartup() {
 				"Id":            txtid,
 				"Name":          name,
 				"Jid":           jid,
-				"Webhook":       webhook,
 				"Token":         token,
 				"Proxy":         proxy_url,
-				"Events":        events,
 				"S3Enabled":     s3_enabled,
 				"MediaDelivery": media_delivery,
 			}}
 			userinfocache.Set(token, v, cache.NoExpiration)
-			// Gets and set subscription to webhook events
-			eventarray := strings.Split(events, ",")
-
-			var subscribedEvents []string
-			if len(eventarray) == 1 && eventarray[0] == "" {
-				subscribedEvents = []string{}
-			} else {
-				for _, arg := range eventarray {
-					if !Find(supportedEventTypes, arg) {
-						log.Warn().Str("Type", arg).Msg("Event type discarded")
-						continue
-					}
-					if !Find(subscribedEvents, arg) {
-						subscribedEvents = append(subscribedEvents, arg)
-					}
-				}
-
-			}
-			eventstring := strings.Join(subscribedEvents, ",")
-			log.Info().Str("events", eventstring).Str("jid", jid).Msg("Attempt to connect")
+			subscribedEvents, _ := getUserSubscribedEvents(s.db, txtid)
+			log.Info().Strs("events", subscribedEvents).Str("jid", jid).Msg("Attempt to connect")
 			killchannel[txtid] = make(chan bool)
 			go s.startClient(txtid, jid, token, subscribedEvents)
 

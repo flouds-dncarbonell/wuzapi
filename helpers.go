@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/zerolog/log"
@@ -101,6 +102,84 @@ func callHookFile(myurl string, payload map[string]string, id string, file strin
 	log.Info().Int("status", resp.StatusCode()).Str("body", string(resp.Body())).Msg("POST request completed")
 
 	return nil
+}
+
+type UserWebhook struct {
+	ID     string `db:"id"`
+	UserID string `db:"user_id"`
+	URL    string `db:"url"`
+	Events string `db:"events"`
+}
+
+func getUserWebhooks(db *sqlx.DB, userID string) ([]UserWebhook, error) {
+	hooks := []UserWebhook{}
+	err := db.Select(&hooks, "SELECT id, user_id, url, events FROM user_webhooks WHERE user_id=$1", userID)
+	if err != nil {
+		return nil, err
+	}
+	return hooks, nil
+}
+
+func getUserSubscribedEvents(db *sqlx.DB, userID string) ([]string, error) {
+	hooks, err := getUserWebhooks(db, userID)
+	if err != nil {
+		return nil, err
+	}
+	eventsSet := make(map[string]struct{})
+	for _, h := range hooks {
+		if h.Events == "" {
+			continue
+		}
+		for _, ev := range strings.Split(h.Events, ",") {
+			ev = strings.TrimSpace(ev)
+			if ev != "" && Find(supportedEventTypes, ev) {
+				eventsSet[ev] = struct{}{}
+			}
+		}
+	}
+	result := make([]string, 0, len(eventsSet))
+	for ev := range eventsSet {
+		result = append(result, ev)
+	}
+	return result, nil
+}
+
+func dispatchUserWebhooks(db *sqlx.DB, userID, token, eventType string, jsonData []byte, path string) {
+	hooks, err := getUserWebhooks(db, userID)
+	if err != nil {
+		log.Warn().Err(err).Str("userID", userID).Msg("Could not get user webhooks")
+		return
+	}
+
+	instanceName := ""
+	if userinfo, found := userinfocache.Get(token); found {
+		instanceName = userinfo.(Values).Get("Name")
+	}
+
+	for _, h := range hooks {
+		events := strings.Split(h.Events, ",")
+		if len(events) > 0 {
+			if !Find(events, eventType) && !Find(events, "All") {
+				continue
+			}
+		}
+
+		data := map[string]string{
+			"jsonData":     string(jsonData),
+			"token":        token,
+			"instanceName": instanceName,
+		}
+
+		if path == "" {
+			go callHook(h.URL, data, userID)
+		} else {
+			go func(url string) {
+				if err := callHookFile(url, data, userID, path); err != nil {
+					log.Error().Err(err).Str("url", url).Msg("Error calling hook file")
+				}
+			}(h.URL)
+		}
+	}
 }
 
 func (s *server) respondWithJSON(w http.ResponseWriter, statusCode int, payload interface{}) {
