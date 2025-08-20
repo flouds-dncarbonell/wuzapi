@@ -284,14 +284,14 @@ document.addEventListener('DOMContentLoaded', function() {
     loadProxyConfig();
   });
 
-  // Webhook Configuration
-  document.getElementById('webhookConfig').addEventListener('click', function() {
-    webhookModal();
-  });
-
   // S3 Test Connection
   document.getElementById('testS3Connection').addEventListener('click', function() {
     testS3Connection();
+  });
+
+  // Webhooks
+  document.getElementById('addWebhookBtn').addEventListener('click', function() {
+    openWebhookModal();
   });
 
   // S3 Delete Configuration
@@ -462,26 +462,6 @@ async function addInstance(data) {
   const responseData = await res.json();
   console.log("Response:", responseData);
   return responseData;
-}
-
-function webhookModal() {
-  getWebhook().then((response)=>{
-    if(response.success==true) {
-      $('#webhookEvents').val(response.data.subscribe);
-      $('#webhookEvents').dropdown('set selected', response.data.subscribe);
-      $('#webhookinput').val(response.data.webhook);
-      $('#modalSetWebhook').modal({onApprove: function() {
-        setWebhook().then((result)=>{
-          if(result.success===true) {
-             $.toast({ class: 'success', message: `Webhook set successfully !`});
-          } else {
-             $.toast({ class: 'error', message: `Problem setting webhook: ${result.error}`});
-          }
-        });
-        return true;
-      }}).modal('show');
-    }
-  });
 }
 
 function modalPairPhone() {
@@ -718,27 +698,135 @@ async function deleteMessage() {
   data = await res.json();
   return data;
 }
- 
-async function setWebhook() {
-  const token = getLocalStorageItem('token');
-  const webhook = document.getElementById('webhookinput').value.trim();
-  const events = $('#webhookEvents').dropdown('get value')
-  if (events.includes("All")) {
-    events.length = 0;
-    events.push("All");
+
+let editingWebhookId = null;
+
+async function listWebhooks(token='') {
+  if(token=='') {
+    token = getLocalStorageItem('token');
   }
   const myHeaders = new Headers();
   myHeaders.append('token', token);
   myHeaders.append('Content-Type', 'application/json');
-  res = await fetch(baseUrl + "/webhook", {
+  const res = await fetch(baseUrl + "/webhook", { method: "GET", headers: myHeaders });
+  return await res.json();
+}
+
+async function createWebhook(url, events) {
+  const token = getLocalStorageItem('token');
+  const myHeaders = new Headers();
+  myHeaders.append('token', token);
+  myHeaders.append('Content-Type', 'application/json');
+  const res = await fetch(baseUrl + "/webhook", {
     method: "POST",
     headers: myHeaders,
-    body: JSON.stringify({webhookurl: webhook, events: events})
+    body: JSON.stringify({webhookurl: url, events: events})
   });
-  data = await res.json();
-  return data;
+  return await res.json();
 }
- 
+
+async function updateWebhook(id, url, events) {
+  const token = getLocalStorageItem('token');
+  const myHeaders = new Headers();
+  myHeaders.append('token', token);
+  myHeaders.append('Content-Type', 'application/json');
+  const res = await fetch(baseUrl + `/webhook/${id}`, {
+    method: "PUT",
+    headers: myHeaders,
+    body: JSON.stringify({webhookurl: url, events: events})
+  });
+  return await res.json();
+}
+
+async function deleteWebhook(id) {
+  const token = getLocalStorageItem('token');
+  const myHeaders = new Headers();
+  myHeaders.append('token', token);
+  const res = await fetch(baseUrl + `/webhook/${id}`, {
+    method: "DELETE",
+    headers: myHeaders,
+  });
+  return await res.json();
+}
+
+function renderWebhooks() {
+  const tbody = document.querySelector('#webhooks-table tbody');
+  if(!tbody) return;
+  tbody.innerHTML = '';
+  listWebhooks().then(result => {
+    if(result.success && Array.isArray(result.data)) {
+      result.data.forEach(hook => {
+        const tr = document.createElement('tr');
+        const events = hook.events || hook.subscribe || [];
+        const url = hook.webhook || hook.url;
+        tr.innerHTML = `<td>${hook.id}</td>` +
+                       `<td>${url || ''}</td>` +
+                       `<td>${events.join(', ')}</td>`;
+        const actionTd = document.createElement('td');
+        const editBtn = document.createElement('button');
+        editBtn.className = 'ui mini button';
+        editBtn.textContent = 'Edit';
+        editBtn.addEventListener('click', () => openWebhookModal(hook));
+        const delBtn = document.createElement('button');
+        delBtn.className = 'ui mini red button';
+        delBtn.textContent = 'Delete';
+        delBtn.addEventListener('click', async () => {
+          const res = await deleteWebhook(hook.id);
+          if(res.success){
+            $.toast({class:'success', message:'Webhook deleted'});
+            renderWebhooks();
+          } else {
+            $.toast({class:'error', message:`Problem deleting webhook: ${res.error}`});
+          }
+        });
+        actionTd.appendChild(editBtn);
+        actionTd.appendChild(delBtn);
+        tr.appendChild(actionTd);
+        tbody.appendChild(tr);
+      });
+    }
+  });
+}
+
+function openWebhookModal(hook=null) {
+  editingWebhookId = hook ? hook.id : null;
+  $('#webhookEvents').dropdown('clear');
+  if(hook) {
+    $('#webhookinput').val(hook.webhook || hook.url || '');
+    const events = hook.events || hook.subscribe || [];
+    $('#webhookEvents').dropdown('set selected', events);
+  } else {
+    $('#webhookinput').val('');
+  }
+  $('#webhookModal').modal({
+    onApprove: function() {
+      saveWebhook();
+      return false;
+    }
+  }).modal('show');
+}
+
+async function saveWebhook() {
+  const url = document.getElementById('webhookinput').value.trim();
+  let events = $('#webhookEvents').dropdown('get value');
+  if (events.includes('All')) {
+    events = ['All'];
+  }
+  let res;
+  if(editingWebhookId) {
+    res = await updateWebhook(editingWebhookId, url, events);
+  } else {
+    res = await createWebhook(url, events);
+  }
+  if(res.success) {
+    $.toast({class:'success', message:'Webhook saved successfully!'});
+    $('#webhookModal').modal('hide');
+    renderWebhooks();
+  } else {
+    $.toast({class:'error', message:`Problem saving webhook: ${res.error}`});
+  }
+}
+
 function doUserAvatar() {
   const userAvatarInput = document.getElementById('useravatarinput');
   let phone = userAvatarInput.value.trim();
@@ -801,6 +889,7 @@ function showWidgets() {
   document.querySelectorAll('.widget').forEach(widget => {
     widget.classList.remove('hidden');
   });
+  renderWebhooks();
 }
 
 function hideWidgets() {
@@ -870,27 +959,6 @@ async function getUsers() {
   });
   data = await res.json();
   return data;
-}
-
-async function getWebhook(token='') {
-  console.log("Getting webhook...");
-  if(token=='') {
-    token = getLocalStorageItem('token');
-  }
-  const myHeaders = new Headers();
-  myHeaders.append('token', token);
-  myHeaders.append('Content-Type', 'application/json');
-  try {
-    const res = await fetch(baseUrl + "/webhook", {
-      method: "GET",
-      headers: myHeaders,
-    });
-    data = await res.json();
-    return data;
-  } catch (error) {
-    return '{}';
-    throw error;
-  }
 }
 
 async function getContacts() {
