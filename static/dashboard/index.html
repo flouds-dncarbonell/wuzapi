@@ -133,12 +133,32 @@
           <div class="description">Configure proxy for WhatsApp connections.</div>
         </div>
       </div>
-      <div class="purple card hidden widget" style="cursor: pointer;" id="webhookConfig">
-        <div class="content"><a class="ui purple right ribbon label">Config</a>
-          <div class="header">Webhook Events</div>
-          <div class="description">Configure webhook URL and event subscriptions.</div>
+    </div>
+
+    <div id="webhooksSection" class="ui segment hidden widget">
+      <div class="ui stackable grid">
+        <div class="row">
+          <div class="left floated left aligned ten wide column">
+            <h3 class="ui header">Webhooks</h3>
+          </div>
+          <div class="right floated right aligned six wide column">
+            <button class="ui primary button" id="addWebhookBtn">
+              <i class="plus icon"></i> Add Webhook
+            </button>
+          </div>
         </div>
       </div>
+      <table class="ui celled table" id="webhooks-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>URL</th>
+            <th>Events</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
     </div>
 
     <div class="ui horizontal divider widget"> User </div>
@@ -303,8 +323,8 @@
 
   <!-- Webhook Modals -->
 
-  <div class="ui modal" id="modalSetWebhook"><i class="close icon"></i>
-    <div class="header"> Webhook </div>
+  <div class="ui modal" id="webhookModal"><i class="close icon"></i>
+    <div class="header">Webhook</div>
     <div class="content">
       <div class="ui form">
         <div class="field">
@@ -371,17 +391,15 @@
             <option value="All">All Events</option>
           </select>
         </div>
-        <div class="field"><label>Webhook URL</label><input id="webhookinput" type="text" placeholder="Type webhook URL"></div>
+        <div class="field">
+          <label>Webhook URL</label>
+          <input id="webhookinput" type="text" placeholder="Type webhook URL">
+        </div>
       </div>
-    <br>
-    <br>
-    <br>
-    <br>
-    <br>
     </div>
     <div class="actions">
-      <div class="ui cancel button secondary">Close</div>
-      <div class="ui positive right labeled icon button">Set<i class="checkmark icon"></i></div>
+      <div class="ui cancel button secondary">Cancel</div>
+      <div class="ui positive right labeled icon button">Save<i class="checkmark icon"></i></div>
     </div>
   </div>
 

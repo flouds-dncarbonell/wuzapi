@@ -200,6 +200,10 @@ a#menulogout, a:visited#menulogout {
   margin: -0.7em !important;
 }
 
+#webhooks-table td {
+  word-break: break-all;
+}
+
 .ui.grid > .column {
   padding: 0.7em !important;
 }
