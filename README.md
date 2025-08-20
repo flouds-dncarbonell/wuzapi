@@ -19,7 +19,7 @@ Be very careful—do not use this to send SPAM or anything similar. Use at your 
 * **Users:** Check if phone numbers have WhatsApp, get user information and avatars, and retrieve the full contact list.
 * **Chat:** Set presence (typing/paused, recording media), mark messages as read, download images from messages, send reactions.
 * **Groups:** Create, delete and list groups, get info, get invite links, set participants, change group photos and names.
-* **Webhooks:** Set and get webhooks that will be called whenever events or messages are received.
+* **Webhooks:** Manage multiple webhooks with individual event subscriptions.
  
 ## Prerequisites
 

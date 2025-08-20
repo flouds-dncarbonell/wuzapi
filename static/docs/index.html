@@ -461,27 +461,24 @@
                 </div>
                 <h2 class="mb-0">Webhook</h2>
             </div>
-            <p>Endpoints para configurar webhooks que receberão notificações de eventos.</p>
+            <p>Endpoints para gerenciar múltiplos webhooks que receberão notificações de eventos.</p>
 
             <div class="endpoint">
                 <h3><span class="method get">GET</span> <span class="path">/webhook</span></h3>
-                <p>Obtém o webhook configurado e eventos inscritos.</p>
-                
+                <p>Lista todos os webhooks configurados.</p>
+
                 <h4>Resposta:</h4>
                 <pre><code class="language-json">{
   "code": 200,
-  "data": {
-    "subscribe": ["Message", "ReadReceipt"],
-    "webhook": "https://example.net/webhook"
-  },
+  "data": [{"id": "abc123", "url": "https://example.net/webhook", "events": ["Message"]}],
   "success": true
 }</code></pre>
             </div>
 
             <div class="endpoint">
                 <h3><span class="method post">POST</span> <span class="path">/webhook</span></h3>
-                <p>Configura um webhook para receber eventos.</p>
-                
+                <p>Cria um novo webhook.</p>
+
                 <h4>Parâmetros do Corpo:</h4>
                 <table class="api-table">
                     <thead>
@@ -493,101 +490,51 @@
                     </thead>
                     <tbody>
                         <tr>
-                            <td class="required">webhook</td>
+                            <td class="required">url</td>
                             <td>string</td>
                             <td>URL do webhook que receberá as chamadas</td>
                         </tr>
                         <tr>
                             <td>events</td>
                             <td>Array[string]</td>
-                            <td>Lista de tipos de eventos para inscrição. Consulte a seção "Tipos de Eventos Disponíveis" abaixo para a lista completa.</td>
-                        </tr>
-                        <tr>
-                            <td>active</td>
-                            <td>boolean</td>
-                            <td>Define se o webhook está ativo ou não. Padrão: true</td>
+                            <td>Lista de tipos de eventos para inscrição.</td>
                         </tr>
                     </tbody>
                 </table>
-                
+
                 <h4>Exemplo de Requisição:</h4>
                 <pre><code class="language-json">{
-  "webhook": "https://example.net/webhook",
+  "url": "https://example.net/webhook",
   "events": ["Message", "ReadReceipt"]
 }</code></pre>
-                
+
                 <h4>Resposta:</h4>
                 <pre><code class="language-json">{
   "code": 200,
-  "data": {
-    "webhook": "https://example.net/webhook",
-    "events": ["Message", "ReadReceipt"]
-  },
+  "data": {"id": "abc123", "url": "https://example.net/webhook", "events": ["Message", "ReadReceipt"]},
   "success": true
 }</code></pre>
             </div>
 
             <div class="endpoint">
-                <h3><span class="method put">PUT</span> <span class="path">/webhook</span></h3>
-                <p>Atualiza a configuração do webhook. Pode atualizar apenas a URL, apenas os eventos, ou ambos.</p>
-                
-                <h4>Parâmetros do Corpo:</h4>
-                <table class="api-table">
-                    <thead>
-                        <tr>
-                            <th>Parâmetro</th>
-                            <th>Tipo</th>
-                            <th>Descrição</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td>webhook</td>
-                            <td>string</td>
-                            <td>Nova URL do webhook (opcional se apenas atualizando eventos)</td>
-                        </tr>
-                        <tr>
-                            <td>events</td>
-                            <td>Array[string]</td>
-                            <td>Nova lista de eventos (opcional se apenas atualizando URL)</td>
-                        </tr>
-                        <tr>
-                            <td>active</td>
-                            <td>boolean</td>
-                            <td>Ativar ou desativar o webhook</td>
-                        </tr>
-                    </tbody>
-                </table>
-                
-                <h4>Exemplos de Requisição:</h4>
-                <pre><code class="language-json">// Atualizar apenas eventos
-{
-  "events": ["Message", "Receipt", "GroupInfo"],
-  "active": true
-}
+                <h3><span class="method put">PUT</span> <span class="path">/webhook/{id}</span></h3>
+                <p>Atualiza a configuração de um webhook existente.</p>
 
-// Atualizar apenas URL
-{
-  "webhook": "https://novo-endpoint.com/webhook",
-  "active": true
-}
-
-// Desativar webhook
-{
-  "active": false
+                <h4>Exemplo de Requisição:</h4>
+                <pre><code class="language-json">{
+  "url": "https://novo-endpoint.com/webhook",
+  "events": ["Message"]
 }</code></pre>
             </div>
 
             <div class="endpoint">
-                <h3><span class="method delete">DELETE</span> <span class="path">/webhook</span></h3>
-                <p>Remove o webhook e limpa a configuração de eventos.</p>
-                
+                <h3><span class="method delete">DELETE</span> <span class="path">/webhook/{id}</span></h3>
+                <p>Remove um webhook.</p>
+
                 <h4>Resposta:</h4>
                 <pre><code class="language-json">{
   "code": 200,
-  "data": {
-    "message": "Webhook removed successfully"
-  },
+  "data": {"message": "Webhook removed successfully"},
   "success": true
 }</code></pre>
             </div>

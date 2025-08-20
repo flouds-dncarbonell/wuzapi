@@ -79,10 +79,10 @@ func (s *server) routes() {
 	s.router.Handle("/session/pairphone", c.Then(s.PairPhone())).Methods("POST")
 	s.router.Handle("/session/history", c.Then(s.RequestHistorySync())).Methods("GET")
 
-	s.router.Handle("/webhook", c.Then(s.SetWebhook())).Methods("POST")
-	s.router.Handle("/webhook", c.Then(s.GetWebhook())).Methods("GET")
-	s.router.Handle("/webhook", c.Then(s.DeleteWebhook())).Methods("DELETE")
-	s.router.Handle("/webhook", c.Then(s.UpdateWebhook())).Methods("PUT")
+	s.router.Handle("/webhook", c.Then(s.CreateWebhook())).Methods("POST")
+	s.router.Handle("/webhook", c.Then(s.ListWebhooks())).Methods("GET")
+	s.router.Handle("/webhook/{id}", c.Then(s.DeleteWebhook())).Methods("DELETE")
+	s.router.Handle("/webhook/{id}", c.Then(s.UpdateWebhook())).Methods("PUT")
 
 	s.router.Handle("/session/proxy", c.Then(s.SetProxy())).Methods("POST")
 

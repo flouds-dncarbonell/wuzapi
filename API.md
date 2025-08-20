@@ -131,45 +131,34 @@ Response:
 
 ---
 
-## Webhook
+## Webhooks
 
-The following _webhook_ endpoints are used to get or set the webhook that will be called whenever a message or event is received. Available event types are:
+These endpoints allow managing multiple webhooks for each user. Each webhook can subscribe to its own set of events. Available event types include `Message`, `ReadReceipt`, `HistorySync` and `ChatPresence`.
 
-* Message
-* ReadReceipt
-* HistorySync
-* ChatPresence
-
-
-## Sets webhook
-
-Configures the webhook to be called using POST whenever a subscribed event occurs.
+### Create webhook
 
 Endpoint: _/webhook_
 
 Method: **POST**
 
-
 ```
-curl -s -X POST -H 'Token: 1234ABCD' -H 'Content-Type: application/json' --data '{"webhookURL":"https://some.server/webhook"}' http://localhost:8080/webhook
+curl -s -X POST -H 'Token: 1234ABCD' -H 'Content-Type: application/json' --data '{"url":"https://some.server/webhook","events":["Message"]}' http://localhost:8080/webhook
 ```
 Response:
 
 ```json
-{ 
-  "code": 200, 
-  "data": { 
-    "webhook": "https://example.net/webhook" 
-  }, 
-  "success": true 
+{
+  "code": 200,
+  "data": {
+    "id": "abc123",
+    "url": "https://example.net/webhook",
+    "events": ["Message"]
+  },
+  "success": true
 }
 ```
 
----
-
-## Gets webhook
-
-Retrieves the configured webhook and subscribed events.
+### List webhooks
 
 Endpoint: _/webhook_
 
@@ -179,14 +168,56 @@ Method: **GET**
 curl -s -X GET -H 'Token: 1234ABCD' http://localhost:8080/webhook
 ```
 Response:
+
 ```json
-{ 
-  "code": 200, 
-  "data": { 
-    "subscribe": [ "Message" ], 
-    "webhook": "https://example.net/webhook" 
-  }, 
-  "success": true 
+{
+  "code": 200,
+  "data": [
+    {"id": "abc123", "url": "https://example.net/webhook", "events": ["Message"]}
+  ],
+  "success": true
+}
+```
+
+### Update webhook
+
+Endpoint: _/webhook/{id}_
+
+Method: **PUT**
+
+```
+curl -s -X PUT -H 'Token: 1234ABCD' -H 'Content-Type: application/json' --data '{"url":"https://some.server/webhook","events":["ReadReceipt"]}' http://localhost:8080/webhook/abc123
+```
+Response:
+
+```json
+{
+  "code": 200,
+  "data": {
+    "id": "abc123",
+    "url": "https://example.net/webhook",
+    "events": ["ReadReceipt"]
+  },
+  "success": true
+}
+```
+
+### Delete webhook
+
+Endpoint: _/webhook/{id}_
+
+Method: **DELETE**
+
+```
+curl -s -X DELETE -H 'Token: 1234ABCD' http://localhost:8080/webhook/abc123
+```
+Response:
+
+```json
+{
+  "code": 200,
+  "data": {"Details": "Webhook removed successfully"},
+  "success": true
 }
 ```
 

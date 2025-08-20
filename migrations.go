@@ -50,6 +50,11 @@ var migrations = []Migration{
 		Name:  "add_s3_support",
 		UpSQL: addS3SupportSQL,
 	},
+	{
+		ID:    5,
+		Name:  "user_webhooks",
+		UpSQL: addUserWebhooksSQL,
+	},
 }
 
 const changeIDToStringSQL = `
@@ -82,12 +87,10 @@ BEGIN
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             token TEXT NOT NULL,
-            webhook TEXT NOT NULL DEFAULT '',
             jid TEXT NOT NULL DEFAULT '',
             qrcode TEXT NOT NULL DEFAULT '',
             connected INTEGER,
             expiration INTEGER,
-            events TEXT NOT NULL DEFAULT '',
             proxy_url TEXT DEFAULT ''
         );
     END IF;
@@ -139,6 +142,27 @@ BEGIN
     
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 's3_retention_days') THEN
         ALTER TABLE users ADD COLUMN s3_retention_days INTEGER DEFAULT 30;
+    END IF;
+END $$;
+`
+
+const addUserWebhooksSQL = `
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'user_webhooks') THEN
+        CREATE TABLE user_webhooks (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            url TEXT NOT NULL,
+            events TEXT NOT NULL DEFAULT ''
+        );
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'webhook') THEN
+        ALTER TABLE users DROP COLUMN webhook;
+    END IF;
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'events') THEN
+        ALTER TABLE users DROP COLUMN events;
     END IF;
 END $$;
 `
@@ -257,12 +281,10 @@ func applyMigration(db *sqlx.DB, migration Migration) error {
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
                     token TEXT NOT NULL,
-                    webhook TEXT NOT NULL DEFAULT '',
                     jid TEXT NOT NULL DEFAULT '',
                     qrcode TEXT NOT NULL DEFAULT '',
                     connected INTEGER,
                     expiration INTEGER,
-                    events TEXT NOT NULL DEFAULT '',
                     proxy_url TEXT DEFAULT ''
                 )`)
 		} else {
@@ -311,6 +333,18 @@ func applyMigration(db *sqlx.DB, migration Migration) error {
 			if err == nil {
 				err = addColumnIfNotExistsSQLite(tx, "users", "s3_retention_days", "INTEGER DEFAULT 30")
 			}
+		} else {
+			_, err = tx.Exec(migration.UpSQL)
+		}
+	} else if migration.ID == 5 {
+		if db.DriverName() == "sqlite" {
+			err = createTableIfNotExistsSQLite(tx, "user_webhooks", `
+                CREATE TABLE user_webhooks (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    events TEXT NOT NULL DEFAULT ''
+                )`)
 		} else {
 			_, err = tx.Exec(migration.UpSQL)
 		}
