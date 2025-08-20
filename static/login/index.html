@@ -167,13 +167,10 @@
 
     <!-- Webhook Modals -->
     <div class="ui modal" id="modalGetWebhook"><i class="close icon"></i>
-      <div class="header"> Webhook </div>
+      <div class="header"> Webhooks </div>
       <div class="content">
         <div class="ui message info hidden"></div>
-        URL:
-        <div class="ui message info" id="getWebhookContainer"></div>
-        Events:
-        <div class="ui message info" id="getWebhookContainerEvents"></div>
+        <div class="ui list" id="webhooksList"></div>
       </div>
       <div class="actions">
         <div class="ui cancel button">Close</div>
@@ -213,11 +210,16 @@
     <div class="ui modal" id="modalDeleteWebhook"><i class="close icon"></i>
       <div class="header"> Delete Webhook </div>
       <div class="content">
-          Are you sure?
+        <div class="ui form">
+          <div class="field">
+            <label>Select Webhook</label>
+            <select id="deleteWebhookSelect" class="ui fluid dropdown"></select>
+          </div>
+        </div>
       </div>
       <div class="actions">
-        <div class="ui negative button">No</div>
-        <div class="ui positive right labeled icon button">Yes</div>
+        <div class="ui negative button">Cancel</div>
+        <div class="ui positive right labeled icon button">Delete<i class="checkmark icon"></i></div>
       </div>
     </div>
 
@@ -442,28 +444,56 @@
       getContacts();
     });
 
-    document.getElementById('getWebhook').addEventListener('click', function() {
-      getWebhook();
+    document.getElementById('getWebhook').addEventListener('click', async function() {
+      const res = await listWebhooks();
+      if(res.success===true) {
+        const listDiv = document.getElementById('webhooksList');
+        listDiv.innerHTML='';
+        res.data.forEach(hook => {
+          const item = document.createElement('div');
+          item.className = 'item';
+          item.innerHTML = `<strong>${hook.id}</strong>: ${hook.url} (${hook.events.join(',')})`;
+          listDiv.appendChild(item);
+        });
+        $('#modalGetWebhook').modal('show');
+      } else {
+        $.toast({ class: 'error', message: `Problem getting webhooks: ${res.error}` });
+      }
     });
 
-    document.getElementById('deleteWebhook').addEventListener('click', function() {
-    $('#modalDeleteWebhook')
-      .modal({
-        closable: true,
-        onDeny: function(){
-          return true;
-        },
-        onApprove: function() {
-          deleteWebhook().then((response)=>{
-            if(response.success==true) {
-              $.toast({ class: 'success', message: `Webhook deleted successfully !` });
-            } else {
-              $.toast({ class: 'error', message: `could not delete webhook! ${response.error}` });
+    document.getElementById('deleteWebhook').addEventListener('click', async function() {
+      const res = await listWebhooks();
+      if(res.success===true) {
+        const sel = document.getElementById('deleteWebhookSelect');
+        sel.innerHTML='';
+        res.data.forEach(hook => {
+          const opt = document.createElement('option');
+          opt.value = hook.id;
+          opt.textContent = `${hook.id} - ${hook.url}`;
+          sel.appendChild(opt);
+        });
+        $('#deleteWebhookSelect').dropdown();
+        $('#modalDeleteWebhook')
+          .modal({
+            closable: true,
+            onDeny: function(){
+              return true;
+            },
+            onApprove: function() {
+              const id = $('#deleteWebhookSelect').dropdown('get value');
+              deleteWebhook(id).then((response)=>{
+                if(response.success==true) {
+                  $.toast({ class: 'success', message: `Webhook deleted successfully !` });
+                } else {
+                  $.toast({ class: 'error', message: `could not delete webhook! ${response.error}` });
+                }
+              });
             }
-          });
-        }
-      })
-      .modal('show');
+          })
+          .modal('show');
+      } else {
+        $.toast({ class: 'error', message: `Problem loading webhooks: ${res.error}` });
+      }
     });
     document.getElementById('setWebhook').addEventListener('click', function() {
       $('#modalSetWebhook').modal({onApprove: function() {
@@ -525,17 +555,17 @@
     res = await fetch(baseUrl + "/webhook", {
       method: "POST",
       headers: myHeaders,
-      body: JSON.stringify({WebhookURL: webhook, events: events})
+      body: JSON.stringify({url: webhook, events: events})
     });
     data = await res.json();
     return data;
   }
- 
-  async function deleteWebhook() {
+
+  async function deleteWebhook(id) {
     const myHeaders = new Headers();
     myHeaders.append('token', token);
     myHeaders.append('Content-Type', 'application/json');
-    res = await fetch(baseUrl + "/webhook", {
+    res = await fetch(baseUrl + `/webhook/${id}`, {
       method: "DELETE",
       headers: myHeaders
     });
@@ -744,32 +774,17 @@
     return data;
   }
 
-  async function getWebhook() {
-    console.log("Getting webhook...");
+  async function listWebhooks() {
+    console.log("Listing webhooks...");
     const myHeaders = new Headers();
     myHeaders.append('token', token);
     myHeaders.append('Content-Type', 'application/json');
-    try {
-      const res = await fetch(baseUrl + "/webhook", {
-        method: "GET",
-        headers: myHeaders,
-      });
-      data = await res.json();
-      let webhook = '';
-      let events = '';
-      if (data.code === 200) {
-         webhook = data.data.webhook
-         events = data.data.subscribe.join(",")
-      } else {
-         webhook = `Problem getting webhook: ${error}`
-      }
-      $('#modalGetWebhook').modal('show');
-      document.getElementById('getWebhookContainer').innerHTML=webhook;
-      document.getElementById('getWebhookContainerEvents').innerHTML=events;
-    } catch (error) {
-      console.error("Error fetching webhook:", error);
-      throw error;
-    }
+    res = await fetch(baseUrl + "/webhook", {
+      method: "GET",
+      headers: myHeaders,
+    });
+    data = await res.json();
+    return data;
   }
 
   async function getContacts() {
