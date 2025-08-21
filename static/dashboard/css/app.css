@@ -34,6 +34,7 @@ body > .ui.logingrid {
 .whatsapp.icon.bi-whatsapp {
   font-size: 6rem;
   background: var(--gradient-primary);
+  background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
@@ -1069,4 +1070,117 @@ a#menulogout, a:visited#menulogout {
     border-color: rgba(219, 40, 40, 0.3) !important;
     background-color: rgba(219, 40, 40, 0.05) !important;
     color: #db2828 !important;
+}
+
+/* Webhooks Manager Styles */
+#webhooksMainContainer .main-header {
+    margin-bottom: 2em !important;
+}
+
+#webhooksMainContainer .main-header .ui.header {
+    color: white !important;
+}
+
+#webhooksMainContainer .main-header .sub.header {
+    color: rgba(255, 255, 255, 0.8) !important;
+}
+
+#webhooksMainContainer .ui.segment {
+    border: 1px solid #e1e8ed;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+    margin-bottom: 1rem;
+}
+
+/* Webhooks loading state */
+#webhooksLoading {
+    min-height: 200px;
+}
+
+/* No webhooks message */
+#noWebhooksMessage {
+    margin-top: 2rem;
+    text-align: center;
+}
+
+/* Webhooks table styling */
+#webhooks-table-manager {
+    margin: 0 !important;
+}
+
+#webhooks-table-manager td {
+    word-break: break-all;
+}
+
+#webhooks-table-manager .ui.small.buttons .button {
+    border: none !important;
+    font-weight: 600 !important;
+    border-radius: 8px !important;
+    transition: all 0.3s ease !important;
+    margin-right: 0.25rem !important;
+}
+
+#webhooks-table-manager .ui.small.buttons .button.blue {
+    background-color: var(--primary-color) !important;
+    color: white !important;
+}
+
+#webhooks-table-manager .ui.small.buttons .button.blue:hover {
+    background-color: var(--secondary-color) !important;
+    transform: translateY(-2px) !important;
+    box-shadow: 0 4px 12px rgba(0, 168, 132, 0.3) !important;
+}
+
+#webhooks-table-manager .ui.small.buttons .button.red {
+    background-color: #db2828 !important;
+    color: white !important;
+}
+
+#webhooks-table-manager .ui.small.buttons .button.red:hover {
+    background-color: #c82121 !important;
+    transform: translateY(-2px) !important;
+    box-shadow: 0 4px 12px rgba(219, 40, 40, 0.3) !important;
+}
+
+/* Webhook status labels */
+#webhooks-table-manager .ui.mini.label.green {
+    background-color: var(--success-green) !important;
+    color: white !important;
+}
+
+#webhooks-table-manager .ui.mini.label.red {
+    background-color: #db2828 !important;
+    color: white !important;
+}
+
+/* Responsive design for webhooks */
+@media (max-width: 768px) {
+    #webhooksMainContainer .ui.stackable.grid .column {
+        width: 100% !important;
+        margin-bottom: 1rem !important;
+    }
+    
+    #webhooksMainContainer .ui.segment .ui.stackable.grid .column {
+        padding: 0.5rem;
+    }
+    
+    #webhooksMainContainer .ui.segment .four.wide.column,
+    #webhooksMainContainer .ui.segment .three.wide.column {
+        width: 100% !important;
+        margin-bottom: 0.5rem !important;
+    }
+    
+    #webhooksMainContainer .ui.segment .six.wide.column {
+        width: 100% !important;
+        margin-bottom: 1rem !important;
+    }
+    
+    #webhooks-table-manager .ui.small.buttons {
+        flex-direction: column !important;
+        gap: 0.25rem !important;
+    }
+    
+    #webhooks-table-manager .ui.small.buttons .button {
+        width: 100% !important;
+        margin-right: 0 !important;
+    }
 }

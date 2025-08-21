@@ -36,6 +36,12 @@ document.addEventListener('DOMContentLoaded', function() {
         $('#webhookEvents').dropdown('set selected', 'All');
         isHandlingChange = false;
       }
+    },
+    onShow: function() {
+      $('#webhookModal').addClass('dropdown-open');
+    },
+    onHide: function() {
+      $('#webhookModal').removeClass('dropdown-open');
     }
   });
 
@@ -49,6 +55,12 @@ document.addEventListener('DOMContentLoaded', function() {
         $('#webhookEventsInstance').dropdown('set selected', 'All');
         isHandlingChange = false;
       }
+    },
+    onShow: function() {
+      $('#addInstanceModal').addClass('dropdown-open');
+    },
+    onHide: function() {
+      $('#addInstanceModal').removeClass('dropdown-open');
     }
   });
 
@@ -289,9 +301,26 @@ document.addEventListener('DOMContentLoaded', function() {
     testS3Connection();
   });
 
-  // Webhooks
-  document.getElementById('addWebhookBtn').addEventListener('click', function() {
+  // Webhooks - Navigation
+  document.getElementById('webhooksConfig').addEventListener('click', function() {
+    showWebhooksManager();
+  });
+
+  document.getElementById('backToDashboardFromWebhooks').addEventListener('click', function() {
+    hideWebhooksManager();
+  });
+
+  // Webhook management buttons
+  document.getElementById('addWebhookFromManager').addEventListener('click', function() {
     openWebhookModal();
+  });
+
+  document.getElementById('createFirstWebhook').addEventListener('click', function() {
+    openWebhookModal();
+  });
+
+  document.getElementById('refreshWebhooks').addEventListener('click', function() {
+    loadWebhooks();
   });
 
   // S3 Delete Configuration
@@ -788,6 +817,87 @@ function renderWebhooks() {
   });
 }
 
+// Webhooks Manager Navigation Functions
+function showWebhooksManager() {
+  $('#mainDashboard').addClass('hidden');
+  $('#webhooksMainContainer').removeClass('hidden');
+  loadWebhooks();
+}
+
+function hideWebhooksManager() {
+  $('#webhooksMainContainer').addClass('hidden');
+  $('#mainDashboard').removeClass('hidden');
+}
+
+function loadWebhooks() {
+  renderWebhooksManager();
+}
+
+function renderWebhooksManager() {
+  const tbody = document.querySelector('#webhooks-table-manager tbody');
+  if(!tbody) return;
+  
+  tbody.innerHTML = '';
+  $('#webhooksLoading').removeClass('hidden');
+  
+  listWebhooks().then(result => {
+    $('#webhooksLoading').addClass('hidden');
+    
+    if(result.success && Array.isArray(result.data)) {
+      if (result.data.length === 0) {
+        $('#noWebhooksMessage').removeClass('hidden');
+        $('#webhooksTableContainer').addClass('hidden');
+      } else {
+        $('#noWebhooksMessage').addClass('hidden');
+        $('#webhooksTableContainer').removeClass('hidden');
+        
+        result.data.forEach(hook => {
+          const tr = document.createElement('tr');
+          const events = hook.events || hook.subscribe || [];
+          const url = hook.webhook || hook.url;
+          const status = hook.active !== false ? 'Active' : 'Inactive';
+          const statusClass = hook.active !== false ? 'ui green mini label' : 'ui red mini label';
+          
+          tr.innerHTML = `
+            <td>${hook.id}</td>
+            <td style="word-break: break-all;">${url || ''}</td>
+            <td>${events.join(', ')}</td>
+            <td><div class="${statusClass}">${status}</div></td>
+          `;
+          
+          const actionTd = document.createElement('td');
+          const buttonGroup = document.createElement('div');
+          buttonGroup.className = 'ui small buttons';
+          
+          const editBtn = document.createElement('button');
+          editBtn.className = 'ui blue button';
+          editBtn.innerHTML = '<i class="edit icon"></i> Edit';
+          editBtn.addEventListener('click', () => openWebhookModal(hook));
+          
+          const deleteBtn = document.createElement('button');
+          deleteBtn.className = 'ui red button';
+          deleteBtn.innerHTML = '<i class="trash icon"></i> Delete';
+          deleteBtn.addEventListener('click', async () => {
+            const res = await deleteWebhook(hook.id);
+            if(res.success){
+              $.toast({class:'success', message:'Webhook deleted successfully'});
+              loadWebhooks();
+            } else {
+              $.toast({class:'error', message:`Problem deleting webhook: ${res.error}`});
+            }
+          });
+          
+          buttonGroup.appendChild(editBtn);
+          buttonGroup.appendChild(deleteBtn);
+          actionTd.appendChild(buttonGroup);
+          tr.appendChild(actionTd);
+          tbody.appendChild(tr);
+        });
+      }
+    }
+  });
+}
+
 function openWebhookModal(hook=null) {
   editingWebhookId = hook ? hook.id : null;
   $('#webhookEvents').dropdown('clear');
@@ -809,9 +919,22 @@ function openWebhookModal(hook=null) {
 async function saveWebhook() {
   const url = document.getElementById('webhookinput').value.trim();
   let events = $('#webhookEvents').dropdown('get value');
+  
+  // Frontend validation
+  if (!url) {
+    $.toast({class:'error', message:'Webhook URL is required'});
+    return;
+  }
+  
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    $.toast({class:'error', message:'Webhook URL must start with http:// or https://'});
+    return;
+  }
+  
   if (events.includes('All')) {
     events = ['All'];
   }
+  
   let res;
   if(editingWebhookId) {
     res = await updateWebhook(editingWebhookId, url, events);
@@ -822,6 +945,10 @@ async function saveWebhook() {
     $.toast({class:'success', message:'Webhook saved successfully!'});
     $('#webhookModal').modal('hide');
     renderWebhooks();
+    // Also update the manager table if it's visible
+    if (!$('#webhooksMainContainer').hasClass('hidden')) {
+      loadWebhooks();
+    }
   } else {
     $.toast({class:'error', message:`Problem saving webhook: ${res.error}`});
   }
@@ -1207,8 +1334,18 @@ function populateInstances(instances) {
                               <div class="content">${instance.jid || 'Not available'}</div>
                           </div>
                           <div class="item">
-                              <div class="header">Webhook</div>
-                              <div class="content" style="word-break: break-all;">${instance.webhook || 'Not configured'}</div>
+                              <div class="header">Webhooks ${instance.webhooks && instance.webhooks.length > 0 ? `(${instance.webhooks.length})` : ''}</div>
+                              <div class="content" style="word-break: break-all;">
+                                ${instance.webhooks && instance.webhooks.length > 0 
+                                  ? instance.webhooks.map((webhook, index) => `
+                                      <div class="ui mini teal label" style="margin-bottom: 4px; display: block; max-width: 100%;">
+                                        <i class="linkify icon"></i>
+                                        <span style="font-size: 0.85em;">${webhook}</span>
+                                      </div>
+                                    `).join('') 
+                                  : `<span style="color: #999; font-style: italic;">${instance.webhook || 'Not configured'}</span>`
+                                }
+                              </div>
                           </div>
                           <div class="item">
                               <div class="header">Subscribed Events</div>

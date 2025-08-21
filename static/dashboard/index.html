@@ -133,33 +133,14 @@
           <div class="description">Configure proxy for WhatsApp connections.</div>
         </div>
       </div>
-    </div>
-
-    <div id="webhooksSection" class="ui segment hidden widget">
-      <div class="ui stackable grid">
-        <div class="row">
-          <div class="left floated left aligned ten wide column">
-            <h3 class="ui header">Webhooks</h3>
-          </div>
-          <div class="right floated right aligned six wide column">
-            <button class="ui primary button" id="addWebhookBtn">
-              <i class="plus icon"></i> Add Webhook
-            </button>
-          </div>
+      <div class="purple card hidden widget" style="cursor: pointer;" id="webhooksConfig">
+        <div class="content"><a class="ui purple right ribbon label">Config</a>
+          <div class="header">Webhooks</div>
+          <div class="description">Manage webhook endpoints and events.</div>
         </div>
       </div>
-      <table class="ui celled table" id="webhooks-table">
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>URL</th>
-            <th>Events</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
     </div>
+
 
     <div class="ui horizontal divider widget"> User </div>
     <div class="ui three column stackable grid cards">
@@ -222,6 +203,94 @@
       </div>
     </div>
 
+  </div>
+
+  <!-- Webhooks Main Container -->
+  <div class="ui container fluid p1 hidden" id="webhooksMainContainer">
+    <!-- Main Header -->
+    <div class="ui container fluid main-header">
+      <div class="ui stackable grid">
+        <div class="row">
+          <div class="left floated left aligned ten wide column">
+            <h1 class="ui header">
+              <i class="globe icon"></i>
+              <div class="content">
+                Webhooks Manager
+                <div class="sub header">Manage webhook endpoints and events</div>
+              </div>
+            </h1>
+          </div>
+          <div class="right floated right aligned six wide column">
+            <button class="ui primary button" id="backToDashboardFromWebhooks">
+              <i class="left arrow icon"></i> Back to Dashboard
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Webhooks Filter and Search -->
+    <div class="ui segment">
+      <div class="ui stackable grid">
+        <div class="six wide column">
+          <div class="ui icon input fluid">
+            <input type="text" id="webhooksSearch" placeholder="Search webhooks by URL...">
+            <i class="search icon"></i>
+          </div>
+        </div>
+        <div class="four wide column">
+          <select class="ui fluid dropdown" id="webhooksFilter">
+            <option value="">All Webhooks</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+        </div>
+        <div class="three wide column">
+          <div class="ui basic buttons fluid">
+            <button class="ui button" id="refreshWebhooks">
+              <i class="refresh icon"></i> Refresh
+            </button>
+          </div>
+        </div>
+        <div class="three wide column">
+          <button class="ui green button fluid" id="addWebhookFromManager">
+            <i class="plus icon"></i> Add Webhook
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Webhooks Loading -->
+    <div class="ui active inverted dimmer hidden" id="webhooksLoading">
+      <div class="ui text loader">Loading webhooks...</div>
+    </div>
+
+    <!-- Webhooks Table Container -->
+    <div class="ui segment" id="webhooksTableContainer">
+      <table class="ui celled table" id="webhooks-table-manager">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>URL</th>
+            <th>Events</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <!-- No Webhooks Message -->
+    <div class="ui placeholder segment hidden" id="noWebhooksMessage">
+      <div class="ui icon header">
+        <i class="globe icon"></i>
+        No webhooks configured
+      </div>
+      <div class="inline">
+        <div class="ui primary button" id="createFirstWebhook">Configure your first webhook</div>
+      </div>
+    </div>
   </div>
 
   <!-- Groups Main Container -->
