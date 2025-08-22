@@ -55,6 +55,11 @@ var migrations = []Migration{
 		Name:  "user_webhooks",
 		UpSQL: addUserWebhooksSQL,
 	},
+	{
+		ID:    6,
+		Name:  "add_chatwoot_support",
+		UpSQL: addChatwootSupportSQL,
+	},
 }
 
 const changeIDToStringSQL = `
@@ -348,6 +353,29 @@ func applyMigration(db *sqlx.DB, migration Migration) error {
 		} else {
 			_, err = tx.Exec(migration.UpSQL)
 		}
+	} else if migration.ID == 6 {
+		if db.DriverName() == "sqlite" {
+			err = createTableIfNotExistsSQLite(tx, "chatwoot_configs", `
+                CREATE TABLE chatwoot_configs (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    enabled BOOLEAN DEFAULT 0,
+                    account_id TEXT NOT NULL,
+                    token TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    name_inbox TEXT DEFAULT '',
+                    sign_msg BOOLEAN DEFAULT 0,
+                    sign_delimiter TEXT DEFAULT '\n',
+                    reopen_conversation BOOLEAN DEFAULT 1,
+                    conversation_pending BOOLEAN DEFAULT 0,
+                    merge_brazil_contacts BOOLEAN DEFAULT 0,
+                    ignore_jids TEXT DEFAULT '[]',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )`)
+		} else {
+			_, err = tx.Exec(migration.UpSQL)
+		}
 	} else {
 		_, err = tx.Exec(migration.UpSQL)
 	}
@@ -546,3 +574,28 @@ func addColumnIfNotExistsSQLite(tx *sqlx.Tx, tableName, columnName, columnDef st
 	}
 	return nil
 }
+
+const addChatwootSupportSQL = `
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'chatwoot_configs') THEN
+        CREATE TABLE chatwoot_configs (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            enabled BOOLEAN DEFAULT FALSE,
+            account_id TEXT NOT NULL,
+            token TEXT NOT NULL,
+            url TEXT NOT NULL,
+            name_inbox TEXT DEFAULT '',
+            sign_msg BOOLEAN DEFAULT FALSE,
+            sign_delimiter TEXT DEFAULT '\n',
+            reopen_conversation BOOLEAN DEFAULT TRUE,
+            conversation_pending BOOLEAN DEFAULT FALSE,
+            merge_brazil_contacts BOOLEAN DEFAULT FALSE,
+            ignore_jids TEXT DEFAULT '[]',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    END IF;
+END $$;
+`

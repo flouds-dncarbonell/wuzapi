@@ -27,6 +27,8 @@ import (
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
+	
+	"wuzapi/chatwoot"
 )
 
 // db field declaration as *sqlx.DB
@@ -521,6 +523,9 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 
 		postmap["type"] = "Message"
 		dowebhook = 1
+		
+		// NOVO: Processar para Chatwoot
+		go chatwoot.ProcessEvent(mycli.userID, mycli.db, rawEvt, postmap)
 		metaParts := []string{fmt.Sprintf("pushname: %s", evt.Info.PushName), fmt.Sprintf("timestamp: %s", evt.Info.Timestamp)}
 		if evt.Info.Type != "" {
 			metaParts = append(metaParts, fmt.Sprintf("type: %s", evt.Info.Type))
@@ -887,6 +892,9 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 	case *events.Receipt:
 		postmap["type"] = "ReadReceipt"
 		dowebhook = 1
+		
+		// NOVO: Processar para Chatwoot
+		go chatwoot.ProcessEvent(mycli.userID, mycli.db, rawEvt, postmap)
 		//if evt.Type == events.ReceiptTypeRead || evt.Type == events.ReceiptTypeReadSelf {
 		if evt.Type == types.ReceiptTypeRead || evt.Type == types.ReceiptTypeReadSelf {
 			log.Info().Strs("id", evt.MessageIDs).Str("source", evt.SourceString()).Str("timestamp", fmt.Sprintf("%v", evt.Timestamp)).Msg("Message was read")
@@ -907,6 +915,9 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 	case *events.Presence:
 		postmap["type"] = "Presence"
 		dowebhook = 1
+		
+		// NOVO: Processar para Chatwoot
+		go chatwoot.ProcessEvent(mycli.userID, mycli.db, rawEvt, postmap)
 		if evt.Unavailable {
 			postmap["state"] = "offline"
 			if evt.LastSeen.IsZero() {

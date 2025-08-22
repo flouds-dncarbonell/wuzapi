@@ -139,6 +139,12 @@
           <div class="description">Manage webhook endpoints and events.</div>
         </div>
       </div>
+      <div class="purple card hidden widget" style="cursor: pointer;" id="chatwootConfig">
+        <div class="content"><a class="ui purple right ribbon label">Config</a>
+          <div class="header">Chatwoot Integration</div>
+          <div class="description">Configure Chatwoot integration for customer support.</div>
+        </div>
+      </div>
     </div>
 
 
@@ -565,6 +571,113 @@
     <div class="actions">
       <div class="ui cancel button secondary">Cancel</div>
       <div class="ui positive right labeled icon button" id="saveProxyConfig">Save<i class="checkmark icon"></i></div>
+    </div>
+  </div>
+
+  <!-- Chatwoot Configuration Modal -->
+  <div class="ui modal" id="modalChatwootConfig"><i class="close icon"></i>
+    <div class="header"> Chatwoot Integration </div>
+    <div class="content">
+      <div class="ui info message">
+        <div class="header">Chatwoot Integration Setup</div>
+        <p>Connect your WhatsApp instance to Chatwoot for professional customer support. Messages will be automatically synchronized between WhatsApp and Chatwoot.</p>
+      </div>
+      
+      <!-- Status Section -->
+      <div class="ui segment" id="chatwootStatusSection">
+        <h4 class="ui header">
+          <i class="circle icon" id="chatwootStatusIcon"></i>
+          <div class="content">
+            Status
+            <div class="sub header" id="chatwootStatusText">Not configured</div>
+          </div>
+        </h4>
+      </div>
+
+      <div class="ui form">
+        <!-- Basic Configuration -->
+        <h4 class="ui dividing header">Basic Configuration</h4>
+        <div class="field">
+          <div class="ui toggle checkbox" id="chatwootEnabledToggle">
+            <input type="checkbox" id="chatwootEnabled">
+            <label>Enable Chatwoot Integration</label>
+          </div>
+          <small>Enable or disable Chatwoot integration for this instance.</small>
+        </div>
+        
+        <div class="field">
+          <label>Chatwoot URL <span class="required">*</span></label>
+          <input id="chatwootUrl" type="url" placeholder="https://app.chatwoot.com" required>
+          <small>Your Chatwoot installation URL (e.g., https://app.chatwoot.com or your self-hosted URL)</small>
+        </div>
+        
+        <div class="two fields">
+          <div class="field">
+            <label>Account ID <span class="required">*</span></label>
+            <input id="chatwootAccountId" type="text" placeholder="123" required>
+            <small>Your Chatwoot Account ID (found in Chatwoot settings)</small>
+          </div>
+          <div class="field">
+            <label>API Token <span class="required">*</span></label>
+            <input id="chatwootToken" type="password" placeholder="Your API access token" required>
+            <small>API access token from Chatwoot (Profile Settings → Access Token)</small>
+          </div>
+        </div>
+        
+        <div class="field">
+          <label>Inbox Name</label>
+          <input id="chatwootInboxName" type="text" placeholder="WhatsApp Support" value="WhatsApp Support">
+          <small>Name for the inbox that will be created in Chatwoot</small>
+        </div>
+
+        <!-- Advanced Settings -->
+        <h4 class="ui dividing header">Advanced Settings</h4>
+        <div class="field">
+          <div class="ui toggle checkbox">
+            <input type="checkbox" id="chatwootSignMsg">
+            <label>Sign Messages</label>
+          </div>
+          <small>Add signature to messages sent from Chatwoot to WhatsApp</small>
+        </div>
+        
+        <div class="field" id="chatwootSignDelimiterField" style="display: none;">
+          <label>Signature Delimiter</label>
+          <input id="chatwootSignDelimiter" type="text" placeholder="\n---\n" value="\n">
+          <small>Text delimiter for message signatures</small>
+        </div>
+        
+        <div class="field">
+          <div class="ui toggle checkbox">
+            <input type="checkbox" id="chatwootReopenConversation" checked>
+            <label>Reopen Conversations</label>
+          </div>
+          <small>Automatically reopen resolved conversations when new messages arrive</small>
+        </div>
+        
+        <div class="field">
+          <div class="ui toggle checkbox">
+            <input type="checkbox" id="chatwootConversationPending">
+            <label>Set Conversations as Pending</label>
+          </div>
+          <small>Mark new conversations as pending instead of open</small>
+        </div>
+
+        <div class="field">
+          <label>Ignored Phone Numbers</label>
+          <textarea id="chatwootIgnoreJids" placeholder="Enter phone numbers to ignore, one per line (e.g., 5511999999999)" rows="3"></textarea>
+          <small>Phone numbers that should be ignored and not synced to Chatwoot</small>
+        </div>
+      </div>
+    </div>
+    <div class="actions">
+      <div class="ui cancel button secondary">Cancel</div>
+      <div class="ui button" id="testChatwootConnection">
+        <i class="plug icon"></i>Test Connection
+      </div>
+      <div class="ui red button" id="deleteChatwootConfig" style="display: none;">
+        <i class="trash icon"></i>Delete Configuration
+      </div>
+      <div class="ui positive right labeled icon button" id="saveChatwootConfig">Save<i class="checkmark icon"></i></div>
     </div>
   </div>
 

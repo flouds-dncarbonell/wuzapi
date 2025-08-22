@@ -24,6 +24,8 @@ import (
 	"github.com/patrickmn/go-cache"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+
+	"wuzapi/chatwoot"
 )
 
 type server struct {
@@ -52,6 +54,8 @@ var (
 	killchannel      = make(map[string](chan bool))
 	userinfocache    = cache.New(5*time.Minute, 10*time.Minute)
 	lastMessageCache = cache.New(24*time.Hour, 24*time.Hour)
+	chatwootWrapper  *chatwoot.HandlerWrapper
+	chatwootCache    *chatwoot.Cache
 )
 
 const version = "1.0.2"
@@ -152,6 +156,9 @@ func init() {
 }
 
 func main() {
+	// Inicializar cache Chatwoot
+	chatwoot.InitCache()
+
 	ex, err := os.Executable()
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to get executable path")
@@ -210,6 +217,11 @@ func main() {
 		db:     db,
 		exPath: exPath,
 	}
+	
+	// Inicializar cache e wrapper Chatwoot
+	chatwoot.InitCache()
+	chatwootWrapper = chatwoot.NewHandlerWrapper(db, s.Respond)
+	
 	s.routes()
 
 	s.connectOnStartup()

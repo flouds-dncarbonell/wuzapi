@@ -253,8 +253,9 @@ func (s *server) ListWebhooks() http.HandlerFunc {
 // CreateWebhook creates a new webhook for the user
 func (s *server) CreateWebhook() http.HandlerFunc {
 	type webhookStruct struct {
-		URL    string   `json:"url"`
-		Events []string `json:"events"`
+		URL        string   `json:"url"`
+		WebhookURL string   `json:"webhookurl"` // For backward compatibility with frontend
+		Events     []string `json:"events"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		txtid := r.Context().Value("userinfo").(Values).Get("Id")
@@ -264,6 +265,25 @@ func (s *server) CreateWebhook() http.HandlerFunc {
 			s.Respond(w, r, http.StatusBadRequest, errors.New("could not decode payload"))
 			return
 		}
+		
+		// Use webhookurl if URL is empty (backward compatibility)
+		webhookURL := t.URL
+		if webhookURL == "" && t.WebhookURL != "" {
+			webhookURL = t.WebhookURL
+		}
+		
+		// Validate webhook URL
+		if webhookURL == "" {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("webhook URL is required"))
+			return
+		}
+		
+		// Validate URL format
+		if !strings.HasPrefix(webhookURL, "http://") && !strings.HasPrefix(webhookURL, "https://") {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("webhook URL must start with http:// or https://"))
+			return
+		}
+		
 		validEvents := []string{}
 		for _, e := range t.Events {
 			if !Find(supportedEventTypes, e) {
@@ -278,14 +298,14 @@ func (s *server) CreateWebhook() http.HandlerFunc {
 			return
 		}
 		eventstring := strings.Join(validEvents, ",")
-		_, err = s.db.Exec("INSERT INTO user_webhooks (id, user_id, url, events) VALUES ($1,$2,$3,$4)", id, txtid, t.URL, eventstring)
+		_, err = s.db.Exec("INSERT INTO user_webhooks (id, user_id, url, events) VALUES ($1,$2,$3,$4)", id, txtid, webhookURL, eventstring)
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New("could not create webhook"))
 			return
 		}
 		union, _ := getUserSubscribedEvents(s.db, txtid)
 		clientManager.UpdateMyClientSubscriptions(txtid, union)
-		response := map[string]interface{}{"id": id, "url": t.URL, "events": validEvents}
+		response := map[string]interface{}{"id": id, "url": webhookURL, "events": validEvents}
 		responseJson, err := json.Marshal(response)
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, err)
@@ -298,8 +318,9 @@ func (s *server) CreateWebhook() http.HandlerFunc {
 // UpdateWebhook updates an existing webhook by ID
 func (s *server) UpdateWebhook() http.HandlerFunc {
 	type webhookStruct struct {
-		URL    string   `json:"url"`
-		Events []string `json:"events"`
+		URL        string   `json:"url"`
+		WebhookURL string   `json:"webhookurl"` // For backward compatibility with frontend
+		Events     []string `json:"events"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
@@ -311,6 +332,25 @@ func (s *server) UpdateWebhook() http.HandlerFunc {
 			s.Respond(w, r, http.StatusBadRequest, errors.New("could not decode payload"))
 			return
 		}
+		
+		// Use webhookurl if URL is empty (backward compatibility)
+		webhookURL := t.URL
+		if webhookURL == "" && t.WebhookURL != "" {
+			webhookURL = t.WebhookURL
+		}
+		
+		// Validate webhook URL
+		if webhookURL == "" {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("webhook URL is required"))
+			return
+		}
+		
+		// Validate URL format
+		if !strings.HasPrefix(webhookURL, "http://") && !strings.HasPrefix(webhookURL, "https://") {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("webhook URL must start with http:// or https://"))
+			return
+		}
+		
 		validEvents := []string{}
 		for _, e := range t.Events {
 			if !Find(supportedEventTypes, e) {
@@ -320,14 +360,14 @@ func (s *server) UpdateWebhook() http.HandlerFunc {
 			validEvents = append(validEvents, e)
 		}
 		eventstring := strings.Join(validEvents, ",")
-		_, err := s.db.Exec("UPDATE user_webhooks SET url=$1, events=$2 WHERE id=$3 AND user_id=$4", t.URL, eventstring, hookID, txtid)
+		_, err := s.db.Exec("UPDATE user_webhooks SET url=$1, events=$2 WHERE id=$3 AND user_id=$4", webhookURL, eventstring, hookID, txtid)
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New("could not update webhook"))
 			return
 		}
 		union, _ := getUserSubscribedEvents(s.db, txtid)
 		clientManager.UpdateMyClientSubscriptions(txtid, union)
-		response := map[string]interface{}{"id": hookID, "url": t.URL, "events": validEvents}
+		response := map[string]interface{}{"id": hookID, "url": webhookURL, "events": validEvents}
 		responseJson, err := json.Marshal(response)
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, err)
