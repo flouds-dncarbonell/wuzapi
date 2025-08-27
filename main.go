@@ -221,11 +221,15 @@ func main() {
 	// Inicializar cache e wrapper Chatwoot
 	chatwoot.InitCache()
 	chatwoot.SetClientGetter(clientManager)
+	chatwoot.InitReconnectionManager(db)
 	chatwootWrapper = chatwoot.NewHandlerWrapper(db, s.Respond)
 	
 	s.routes()
 
 	s.connectOnStartup()
+
+	// Iniciar job de limpeza automática de mensagens
+	go s.startMessageCleanupJob()
 
 	srv := &http.Server{
 		Addr:              *address + ":" + *port,
@@ -286,4 +290,43 @@ func main() {
 	log.Info().Str("address", *address).Str("port", *port).Msg("Server started. Waiting for connections...")
 	select {}
 
+}
+
+// startMessageCleanupJob executa limpeza automática de mensagens diariamente às 03:00
+func (s *server) startMessageCleanupJob() {
+	// Calcular próximo horário de execução (03:00 da madrugada)
+	now := time.Now()
+	next := time.Date(now.Year(), now.Month(), now.Day(), 3, 0, 0, 0, now.Location())
+	if now.After(next) {
+		next = next.Add(24 * time.Hour)
+	}
+	
+	// Esperar até próximo horário de execução
+	waitTime := next.Sub(now)
+	log.Info().
+		Time("next_cleanup", next).
+		Dur("wait_time", waitTime).
+		Msg("📅 Message cleanup job scheduled")
+	
+	timer := time.NewTimer(waitTime)
+	defer timer.Stop()
+	
+	for {
+		select {
+		case <-timer.C:
+			log.Info().Msg("🧹 Starting automated message cleanup")
+			
+			err := chatwoot.CleanupOldMessages(s.db)
+			if err != nil {
+				log.Error().
+					Err(err).
+					Msg("❌ Failed to run message cleanup")
+			} else {
+				log.Info().Msg("✅ Message cleanup completed successfully")
+			}
+			
+			// Agendar próxima execução em 24h
+			timer.Reset(24 * time.Hour)
+		}
+	}
 }

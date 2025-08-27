@@ -105,7 +105,7 @@ func UpdateMessageChatwootID(db *sqlx.DB, whatsappMessageID string, chatwootMess
 func FindMessageByStanzaID(db *sqlx.DB, stanzaID, userID string) (*MessageRecord, error) {
 	var msg MessageRecord
 	query := `
-		SELECT id, user_id, content, sender_name, message_type, chatwoot_message_id, from_me, chat_jid, created_at, updated_at
+		SELECT id, user_id, content, sender_name, message_type, chatwoot_message_id, from_me, chat_jid, created_at, updated_at, chatwoot_conversation_id
 		FROM messages 
 		WHERE id = $1 AND user_id = $2
 		LIMIT 1
@@ -137,7 +137,7 @@ func FindMessageByStanzaID(db *sqlx.DB, stanzaID, userID string) (*MessageRecord
 func FindMessageByChatwootID(db *sqlx.DB, chatwootID int, userID string) (*MessageRecord, error) {
 	var msg MessageRecord
 	query := `
-		SELECT id, user_id, content, sender_name, message_type, chatwoot_message_id, from_me, chat_jid, created_at, updated_at
+		SELECT id, user_id, content, sender_name, message_type, chatwoot_message_id, from_me, chat_jid, created_at, updated_at, chatwoot_conversation_id
 		FROM messages 
 		WHERE chatwoot_message_id = $1 AND user_id = $2
 		LIMIT 1
@@ -210,7 +210,7 @@ func GetMessageHistory(db *sqlx.DB, userID string, limit int) ([]MessageRecord, 
 	
 	var messages []MessageRecord
 	query := `
-		SELECT id, user_id, content, sender_name, message_type, chatwoot_message_id, from_me, chat_jid, created_at, updated_at
+		SELECT id, user_id, content, sender_name, message_type, chatwoot_message_id, from_me, chat_jid, created_at, updated_at, chatwoot_conversation_id
 		FROM messages 
 		WHERE user_id = ?
 		ORDER BY created_at DESC
@@ -231,40 +231,66 @@ func GetMessageHistory(db *sqlx.DB, userID string, limit int) ([]MessageRecord, 
 	return messages, nil
 }
 
-// CleanupOldMessages remove mensagens antigas (função de manutenção)
-func CleanupOldMessages(db *sqlx.DB, olderThanDays int) error {
-	if olderThanDays <= 0 {
-		olderThanDays = 30 // Padrão: 30 dias
-	}
+// CleanupOldMessages implementa limpeza inteligente de mensagens:
+// 1. Conversas ativas: manter últimos 30 dias de mensagens
+// 2. Conversas inativas > 90 dias: limpar completamente
+func CleanupOldMessages(db *sqlx.DB) error {
+	var totalDeleted int64
 	
-	query := `
-		DELETE FROM messages 
-		WHERE created_at < datetime('now', '-' || ? || ' days')
+	// Passo 1: Limpar mensagens antigas em conversas ativas
+	// (manter só últimos 30 dias da última mensagem por conversa)
+	step1Query := `
+		DELETE FROM messages m1
+		WHERE EXISTS (
+			SELECT 1 FROM (
+				SELECT chat_jid, user_id, MAX(created_at) as last_msg
+				FROM messages 
+				GROUP BY chat_jid, user_id
+			) recent
+			WHERE recent.chat_jid = m1.chat_jid 
+			AND recent.user_id = m1.user_id
+			AND m1.created_at < (recent.last_msg - INTERVAL '30 days')
+		)
 	`
 	
-	// Para PostgreSQL, a sintaxe é diferente
-	if db.DriverName() == "postgres" {
-		query = `
-			DELETE FROM messages 
-			WHERE created_at < NOW() - INTERVAL '%d days'
-		`
-		query = fmt.Sprintf(query, olderThanDays)
-	}
-	
-	result, err := db.Exec(query, olderThanDays)
+	result1, err := db.Exec(step1Query)
 	if err != nil {
-		return fmt.Errorf("failed to cleanup old messages: %w", err)
+		return fmt.Errorf("failed to cleanup old messages in active conversations: %w", err)
 	}
 
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get cleanup rows affected: %w", err)
-	}
+	deleted1, _ := result1.RowsAffected()
+	totalDeleted += deleted1
 
 	log.Info().
-		Int("older_than_days", olderThanDays).
-		Int64("deleted_rows", rowsAffected).
-		Msg("🧹 Cleaned up old messages")
+		Int64("deleted_messages", deleted1).
+		Msg("🧹 Step 1: Cleaned old messages in active conversations (30+ days old)")
+
+	// Passo 2: Limpar completamente conversas inativas > 90 dias
+	step2Query := `
+		DELETE FROM messages
+		WHERE (chat_jid, user_id) IN (
+			SELECT chat_jid, user_id
+			FROM messages
+			GROUP BY chat_jid, user_id
+			HAVING MAX(created_at) < NOW() - INTERVAL '90 days'
+		)
+	`
+	
+	result2, err := db.Exec(step2Query)
+	if err != nil {
+		return fmt.Errorf("failed to cleanup inactive conversations: %w", err)
+	}
+
+	deleted2, _ := result2.RowsAffected()
+	totalDeleted += deleted2
+
+	log.Info().
+		Int64("deleted_messages", deleted2).
+		Msg("🧹 Step 2: Cleaned completely inactive conversations (90+ days)")
+
+	log.Info().
+		Int64("total_deleted", totalDeleted).
+		Msg("🧹 Cleanup completed successfully")
 
 	return nil
 }

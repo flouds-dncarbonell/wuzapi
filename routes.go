@@ -97,6 +97,7 @@ func (s *server) routes() {
 	s.router.Handle("/chatwoot/config", c.Then(chatwootWrapper.DeleteConfig())).Methods("DELETE")
 	s.router.Handle("/chatwoot/status", c.Then(chatwootWrapper.GetStatus())).Methods("GET")
 	s.router.Handle("/chatwoot/test", c.Then(chatwootWrapper.TestConnection())).Methods("POST")
+	s.router.Handle("/chatwoot/cleanup", c.Then(chatwootWrapper.CleanupMessages())).Methods("POST")
 	s.router.Handle("/chatwoot/webhook/{token}", chatwootWrapper.Webhook()).Methods("POST")
 
 	s.router.Handle("/chat/send/text", c.Then(s.SendMessage())).Methods("POST")

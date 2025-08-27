@@ -167,17 +167,51 @@ func (w *WebhookProcessor) ProcessWebhook(c WebhookContext) {
 
 // processMessage processa a mensagem do webhook e envia para WhatsApp
 func (w *WebhookProcessor) processMessage(payload WebhookPayload, config *Config) error {
-	chatID := w.extractChatID(payload)
-	if chatID == "" {
-		return fmt.Errorf("não foi possível extrair ID do chat")
-	}
-
+	// 1. Verificar formato do identificador
+	identifier := payload.Conversation.Meta.Sender.Identifier
+	phoneNumber := payload.Conversation.Meta.Sender.PhoneNumber
+	
 	log.Info().
-		Str("chat_id", chatID).
+		Str("identifier", identifier).
+		Str("phone_number", phoneNumber).
 		Int("conversation", payload.Conversation.ID).
 		Str("user_id", config.UserID).
 		Msg("Processando mensagem para WhatsApp")
+	
+	// 2. Se tem identifier válido (JID), processar normalmente
+	if w.hasValidJID(identifier) {
+		log.Debug().Str("identifier", identifier).
+			Msg("✅ Valid JID found - processing normally")
+		return w.processWithValidJID(payload, config, identifier)
+	}
+	
+	// 3. Se só tem phone_number, validar
+	if phoneNumber != "" {
+		cleanPhone := strings.TrimPrefix(phoneNumber, "+")
+		log.Info().Str("phone", cleanPhone).
+			Msg("🔍 Only phone number found - validating WhatsApp registration")
+		return w.validateAndProcess(payload, config, cleanPhone)
+	}
+	
+	// 4. Sem dados suficientes
+	log.Error().Msg("❌ No valid identifier or phone number found")
+	return fmt.Errorf("no valid identifier or phone number found")
 
+}
+
+// hasValidJID verifica se o identifier é um JID válido do WhatsApp
+func (w *WebhookProcessor) hasValidJID(identifier string) bool {
+	if identifier == "" {
+		return false
+	}
+	
+	// Verificar se é formato JID válido
+	return strings.HasSuffix(identifier, "@s.whatsapp.net") || 
+		   strings.HasSuffix(identifier, "@g.us")
+}
+
+// processWithValidJID processa mensagem com JID válido (fluxo normal)
+func (w *WebhookProcessor) processWithValidJID(payload WebhookPayload, config *Config, chatID string) error {
 	// Verificar se esta mensagem específica já foi processada (anti-duplicação adicional)
 	messageKey := fmt.Sprintf("processed_msg:%d:%s:%s", payload.ID, payload.Event, config.UserID)
 	if GlobalCache.HasProcessedReadReceipt(messageKey) {
@@ -212,6 +246,185 @@ func (w *WebhookProcessor) processMessage(payload WebhookPayload, config *Config
 
 	log.Debug().Msg("Nenhum processamento necessário para esta mensagem")
 	return nil
+}
+
+// validateAndProcess valida número WhatsApp e processa mensagem
+func (w *WebhookProcessor) validateAndProcess(payload WebhookPayload, config *Config, phoneNumber string) error {
+	log.Info().Str("phone", phoneNumber).Msg("🔍 Validating phone number")
+	
+	// 1. Validar número via API WhatsApp
+	isValid, jid, err := w.validateWhatsAppNumber(phoneNumber, config.UserID)
+	if err != nil {
+		log.Error().Err(err).Str("phone", phoneNumber).
+			Msg("Failed to validate WhatsApp number")
+		// Em caso de erro na validação, tentar processar mesmo assim com fallback
+		return w.processWithFallback(payload, config, phoneNumber)
+	}
+	
+	if isValid {
+		// 2a. Número válido: Processar mensagem + Atualizar contato
+		log.Info().Str("phone", phoneNumber).Str("jid", jid).
+			Msg("✅ Valid WhatsApp number - processing message and updating contact")
+		return w.processValidNumber(payload, config, jid, phoneNumber)
+	} else {
+		// 2b. Número inválido: Enviar mensagem privada no Chatwoot
+		log.Warn().Str("phone", phoneNumber).
+			Msg("❌ Invalid WhatsApp number - sending private message to Chatwoot")
+		return w.processInvalidNumber(payload, config, phoneNumber)
+	}
+}
+
+// validateWhatsAppNumber valida se um número tem WhatsApp usando a API IsOnWhatsApp
+func (w *WebhookProcessor) validateWhatsAppNumber(phoneNumber, userID string) (bool, string, error) {
+	// Usar GlobalClientGetter para validar via IsOnWhatsApp
+	client := GlobalClientGetter.GetWhatsmeowClient(userID)
+	if client == nil {
+		return false, "", fmt.Errorf("WhatsApp client not found for user %s", userID)
+	}
+	
+	log.Debug().Str("phone", phoneNumber).Str("user_id", userID).
+		Msg("Calling IsOnWhatsApp API")
+	
+	// Validar número
+	resp, err := client.IsOnWhatsApp([]string{phoneNumber})
+	if err != nil {
+		return false, "", fmt.Errorf("failed to check WhatsApp: %w", err)
+	}
+	
+	// Verificar resultado
+	for _, user := range resp {
+		if user.Query == phoneNumber && user.IsIn {
+			verifiedName := ""
+			if user.VerifiedName != nil && user.VerifiedName.Details != nil {
+				verifiedName = user.VerifiedName.Details.GetVerifiedName()
+			}
+			
+			log.Info().
+				Str("phone", phoneNumber).
+				Str("jid", user.JID.String()).
+				Str("verified_name", verifiedName).
+				Msg("✅ Number is registered on WhatsApp")
+			return true, user.JID.String(), nil // Número válido + JID completo
+		}
+	}
+	
+	log.Warn().Str("phone", phoneNumber).Msg("❌ Number is not registered on WhatsApp")
+	return false, "", nil // Número não está no WhatsApp
+}
+
+// processValidNumber processa número válido: envia mensagem e atualiza contato
+func (w *WebhookProcessor) processValidNumber(payload WebhookPayload, config *Config, jid, phoneNumber string) error {
+	// 1. Processar mensagem normalmente com JID validado
+	err := w.processWithValidJID(payload, config, jid)
+	if err != nil {
+		log.Error().Err(err).
+			Str("jid", jid).
+			Str("phone", phoneNumber).
+			Msg("Failed to process message with validated JID")
+		return err
+	}
+	
+	// 2. Atualizar contato no Chatwoot (em paralelo)
+	go w.updateContactInChatwoot(payload.Conversation.ContactInbox.ContactID, jid, config)
+	
+	log.Info().
+		Str("phone", phoneNumber).
+		Str("jid", jid).
+		Int("contact_id", payload.Conversation.ContactInbox.ContactID).
+		Msg("✅ Valid number processed successfully and contact update scheduled")
+	
+	return nil
+}
+
+// processInvalidNumber processa número inválido: envia mensagem privada no Chatwoot
+func (w *WebhookProcessor) processInvalidNumber(payload WebhookPayload, config *Config, phoneNumber string) error {
+	// Criar cliente Chatwoot
+	client := NewClient(*config)
+	
+	// Criar mensagem privada informando que número é inválido
+	invalidMessage := fmt.Sprintf(
+		"⚠️ **Número WhatsApp Inválido**\n\n"+
+		"O número %s não está registrado no WhatsApp.\n\n"+
+		"**Possíveis causas:**\n"+
+		"• Número incorreto\n"+
+		"• WhatsApp não instalado\n"+
+		"• Número bloqueado/inativo\n\n"+
+		"_Mensagem não enviada._",
+		phoneNumber,
+	)
+	
+	// Criar payload da mensagem privada
+	messagePayload := map[string]interface{}{
+		"content":      invalidMessage,
+		"message_type": "outgoing",
+		"private":      true, // 🎯 MENSAGEM PRIVADA - só agentes veem
+	}
+	
+	endpoint := fmt.Sprintf("/api/v1/accounts/%s/conversations/%d/messages", 
+		config.AccountID, payload.Conversation.ID)
+	
+	_, err := client.makeRequest("POST", endpoint, messagePayload)
+	if err != nil {
+		log.Error().Err(err).
+			Int("conversation_id", payload.Conversation.ID).
+			Str("phone", phoneNumber).
+			Msg("Failed to send invalid number notification")
+		return err
+	}
+	
+	log.Info().
+		Str("phone", phoneNumber).
+		Int("conversation_id", payload.Conversation.ID).
+		Msg("📝 Private notification sent about invalid WhatsApp number")
+	
+	return nil // Sucesso - mensagem privada enviada
+}
+
+// processWithFallback processa mensagem com fallback quando validação falha
+func (w *WebhookProcessor) processWithFallback(payload WebhookPayload, config *Config, phoneNumber string) error {
+	// Assumir JID e tentar processar
+	assumedJID := phoneNumber + "@s.whatsapp.net"
+	
+	log.Warn().
+		Str("phone", phoneNumber).
+		Str("assumed_jid", assumedJID).
+		Msg("⚠️ Using fallback JID due to validation error")
+	
+	return w.processWithValidJID(payload, config, assumedJID)
+}
+
+// updateContactInChatwoot atualiza o identifier do contato no Chatwoot com JID validado
+func (w *WebhookProcessor) updateContactInChatwoot(contactID int, jid string, config *Config) {
+	client := NewClient(*config)
+	
+	log.Info().Int("contact_id", contactID).Str("jid", jid).
+		Msg("🎯 Updating contact with validated JID")
+	
+	// Preparar payload de atualização
+	updatePayload := map[string]interface{}{
+		"identifier": jid, // Atualizar identifier com JID completo
+		"additional_attributes": map[string]interface{}{
+			"whatsapp_validated": true,
+			"validation_source":  "wuzapi_webhook",
+			"validation_date":    time.Now().Format(time.RFC3339),
+		},
+	}
+	
+	endpoint := fmt.Sprintf("/api/v1/accounts/%s/contacts/%d", config.AccountID, contactID)
+	
+	_, err := client.makeRequest("PATCH", endpoint, updatePayload)
+	if err != nil {
+		log.Error().Err(err).
+			Int("contact_id", contactID).
+			Str("jid", jid).
+			Msg("Failed to update contact identifier")
+		return
+	}
+	
+	log.Info().
+		Int("contact_id", contactID).
+		Str("jid", jid).
+		Msg("✅ Contact identifier updated successfully")
 }
 
 // processMessageDeletion processa deleção de mensagens
@@ -335,6 +548,12 @@ func (w *WebhookProcessor) processBotCommands(payload WebhookPayload, config *Co
 	log.Info().Str("command", command).Msg("Processando comando do bot")
 
 	switch {
+	case command == "qrcode" || command == "qr":
+		return w.handleQRCodeCommand(payload, config)
+		
+	case command == "status":
+		return w.handleStatusCommand(payload, config)
+		
 	case strings.Contains(command, "init") || strings.Contains(command, "iniciar"):
 		// TODO: Implementar comando de inicialização
 		log.Info().Msg("Comando de inicialização recebido")
@@ -342,10 +561,6 @@ func (w *WebhookProcessor) processBotCommands(payload WebhookPayload, config *Co
 	case command == "clearcache":
 		// TODO: Implementar limpeza de cache
 		log.Info().Msg("Comando de limpeza de cache recebido")
-		
-	case command == "status":
-		// TODO: Implementar verificação de status
-		log.Info().Msg("Comando de status recebido")
 		
 	case command == "disconnect" || command == "desconectar":
 		// TODO: Implementar desconexão
@@ -1748,6 +1963,128 @@ func (w *WebhookProcessor) saveOutgoingMessage(messageID, content, userID, chatI
 		Interface("chatwoot_message_id", chatwootMessageID).
 		Bool("has_chatwoot_id", chatwootMessageID != nil).
 		Msg("💾 Outgoing message saved to database with Chatwoot ID link")
+	
+	return nil
+}
+
+// handleQRCodeCommand processa comando /qrcode
+func (w *WebhookProcessor) handleQRCodeCommand(payload WebhookPayload, config *Config) error {
+	log.Info().Str("userID", config.UserID).Int("conversationID", payload.Conversation.ID).Msg("🔥 QR Code generation requested")
+	
+	// Verificar se WhatsApp já está conectado
+	if GlobalClientGetter != nil {
+		client := GlobalClientGetter.GetWhatsmeowClient(config.UserID)
+		if client != nil && client.IsConnected() {
+			return w.sendPrivateMessage(payload.Conversation.ID, 
+				"✅ **WhatsApp já está conectado!**\n\nNão é necessário gerar QR code.", config)
+		}
+	}
+	
+	// Buscar QR code atual do banco
+	var qrCode string
+	err := w.db.Get(&qrCode, "SELECT qrcode FROM users WHERE id=$1", config.UserID)
+	if err != nil || qrCode == "" {
+		return w.sendPrivateMessage(payload.Conversation.ID, 
+			"❌ **QR Code não disponível**\n\nO sistema WhatsApp pode precisar ser reiniciado.", config)
+	}
+	
+	// Enviar QR code como imagem
+	return w.sendQRCodeMessage(payload.Conversation.ID, qrCode, config)
+}
+
+// handleStatusCommand processa comando /status
+func (w *WebhookProcessor) handleStatusCommand(payload WebhookPayload, config *Config) error {
+	log.Info().Str("userID", config.UserID).Msg("Status command requested")
+	
+	// Verificar status da conexão WhatsApp
+	var statusMessage string
+	if GlobalClientGetter == nil {
+		statusMessage = "❌ **Sistema Indisponível**\n\nClientManager não inicializado"
+	} else {
+		client := GlobalClientGetter.GetWhatsmeowClient(config.UserID)
+		if client == nil {
+			statusMessage = "❌ **WhatsApp Desconectado**\n\nCliente não encontrado"
+		} else if !client.IsConnected() {
+			statusMessage = "⚠️ **WhatsApp Reconectando...**\n\nTentativa em andamento"
+		} else {
+			// Status detalhado
+			statusMessage = fmt.Sprintf(
+				"✅ **WhatsApp Conectado**\n\n"+
+				"📊 **Status:**\n"+
+				"• Conexão: Ativa\n"+
+				"• Chatwoot: %s\n"+
+				"• Inbox: %s\n"+
+				"• Usuário: %s\n\n"+
+				"⏰ Verificado: %s",
+				config.URL,
+				config.NameInbox,
+				config.UserID,
+				time.Now().Format("15:04:05"),
+			)
+		}
+	}
+	
+	return w.sendPrivateMessage(payload.Conversation.ID, statusMessage, config)
+}
+
+// sendQRCodeMessage envia QR code como mensagem no Chatwoot
+func (w *WebhookProcessor) sendQRCodeMessage(conversationID int, qrCodeData string, config *Config) error {
+	client := NewClient(*config)
+	
+	// Extrair apenas o base64 do data URL se necessário
+	if strings.Contains(qrCodeData, "data:image/png;base64,") {
+		qrCodeData = strings.TrimPrefix(qrCodeData, "data:image/png;base64,")
+	}
+	
+	// Criar attachment para o QR code
+	attachmentData := map[string]interface{}{
+		"content":      "📱 **QR Code para Conexão**\n\n**Instruções:**\n1️⃣ Abra o WhatsApp no seu celular\n2️⃣ Toque em ⋮ (menu) > Aparelhos conectados\n3️⃣ Toque em 'Conectar um aparelho'\n4️⃣ Escaneie este código\n\n⏰ **Válido por alguns minutos**",
+		"message_type": "incoming",
+		"private":      true,
+		"attachments": []map[string]interface{}{
+			{
+				"data_url":  fmt.Sprintf("data:image/png;base64,%s", qrCodeData),
+				"file_type": "image",
+			},
+		},
+	}
+	
+	endpoint := fmt.Sprintf("/api/v1/accounts/%s/conversations/%d/messages", client.AccountID, conversationID)
+	_, err := client.makeRequest("POST", endpoint, attachmentData)
+	
+	if err != nil {
+		return fmt.Errorf("failed to send QR code message: %w", err)
+	}
+	
+	log.Info().
+		Str("userID", config.UserID).
+		Int("conversationID", conversationID).
+		Msg("📱 QR Code sent successfully")
+	
+	return nil
+}
+
+// sendPrivateMessage envia mensagem privada no Chatwoot
+func (w *WebhookProcessor) sendPrivateMessage(conversationID int, message string, config *Config) error {
+	client := NewClient(*config)
+	
+	messageData := map[string]interface{}{
+		"content":     message,
+		"message_type": "incoming",
+		"private":     true,
+	}
+	
+	endpoint := fmt.Sprintf("/api/v1/accounts/%s/conversations/%d/messages", client.AccountID, conversationID)
+	_, err := client.makeRequest("POST", endpoint, messageData)
+	
+	if err != nil {
+		return fmt.Errorf("failed to send private message: %w", err)
+	}
+	
+	log.Debug().
+		Str("userID", config.UserID).
+		Int("conversationID", conversationID).
+		Msg("💬 Private message sent successfully")
 	
 	return nil
 }

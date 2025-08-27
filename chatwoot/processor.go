@@ -276,7 +276,7 @@ func processIndividualMessage(client *Client, config *Config, evt *events.Messag
 				Str("content", content).
 				Msg("🔄 About to save message to database with Chatwoot ID")
 			
-			err = saveMessageToDB(db, evt, userID, content, chatwootMsg.ID)
+			err = saveMessageToDB(db, evt, userID, content, chatwootMsg.ID, conversation.ID)
 			if err != nil {
 				log.Warn().Err(err).
 					Str("messageID", evt.Info.ID).
@@ -462,7 +462,7 @@ func processGroupAsContact(client *Client, config *Config, evt *events.Message, 
 				Str("groupJID", evt.Info.Chat.String()).
 				Msg("🔄 About to save group message to database with Chatwoot ID")
 			
-			err = saveMessageToDB(db, evt, userID, content, chatwootMsg.ID)
+			err = saveMessageToDB(db, evt, userID, content, chatwootMsg.ID, conversation.ID)
 			if err != nil {
 				log.Warn().Err(err).
 					Str("messageID", evt.Info.ID).
@@ -973,11 +973,12 @@ func extractQuotedMessageID(evt *events.Message) string {
 }
 
 // saveMessageToDB salva mensagem no banco com vínculo Chatwoot
-func saveMessageToDB(db *sqlx.DB, evt *events.Message, userID string, content string, chatwootMessageID int) error {
+func saveMessageToDB(db *sqlx.DB, evt *events.Message, userID string, content string, chatwootMessageID int, chatwootConversationID int) error {
 	log.Debug().
 		Str("whatsapp_id", evt.Info.ID).
 		Str("user_id", userID).
 		Int("chatwoot_id", chatwootMessageID).
+		Int("chatwoot_conversation_id", chatwootConversationID).
 		Str("content", content).
 		Msg("📥 saveMessageToDB called with parameters")
 	// Determinar tipo da mensagem
@@ -1003,14 +1004,15 @@ func saveMessageToDB(db *sqlx.DB, evt *events.Message, userID string, content st
 	}
 	
 	msg := MessageRecord{
-		ID:                evt.Info.ID,
-		UserID:            userID,
-		Content:           content,
-		SenderName:        senderName,
-		MessageType:       messageType,
-		ChatwootMessageID: &chatwootMessageID,
-		FromMe:            evt.Info.IsFromMe,
-		ChatJID:           evt.Info.Chat.String(),
+		ID:                     evt.Info.ID,
+		UserID:                 userID,
+		Content:                content,
+		SenderName:             senderName,
+		MessageType:            messageType,
+		ChatwootMessageID:      &chatwootMessageID,
+		ChatwootConversationID: &chatwootConversationID,
+		FromMe:                 evt.Info.IsFromMe,
+		ChatJID:                evt.Info.Chat.String(),
 	}
 	
 	return SaveMessage(db, msg)
@@ -1785,7 +1787,7 @@ func processMediaMessage(client *Client, config *Config, evt *events.Message, us
 			Str("mediaType", string(mediaData.MessageType)).
 			Msg("🔄 About to save media message to database with Chatwoot ID")
 		
-		err = saveMediaMessageToDB(db, evt, userID, mediaData, chatwootMsg.ID)
+		err = saveMediaMessageToDB(db, evt, userID, mediaData, chatwootMsg.ID, conversationID)
 		if err != nil {
 			log.Warn().Err(err).
 				Str("messageID", evt.Info.ID).
@@ -1924,7 +1926,7 @@ func processGroupMediaMessage(client *Client, config *Config, evt *events.Messag
 			Str("mediaType", string(mediaData.MessageType)).
 			Msg("🔄 About to save group media message to database with Chatwoot ID")
 		
-		err = saveMediaMessageToDB(db, evt, userID, mediaData, chatwootMsg.ID)
+		err = saveMediaMessageToDB(db, evt, userID, mediaData, chatwootMsg.ID, conversationID)
 		if err != nil {
 			log.Warn().Err(err).
 				Str("messageID", evt.Info.ID).
@@ -2153,11 +2155,12 @@ func processGroupReactionMessage(client *Client, config *Config, evt *events.Mes
 }
 
 // saveMediaMessageToDB salva mensagem de mídia no banco com vínculo Chatwoot
-func saveMediaMessageToDB(db *sqlx.DB, evt *events.Message, userID string, mediaData *MediaData, chatwootMessageID int) error {
+func saveMediaMessageToDB(db *sqlx.DB, evt *events.Message, userID string, mediaData *MediaData, chatwootMessageID int, chatwootConversationID int) error {
 	log.Debug().
 		Str("whatsapp_id", evt.Info.ID).
 		Str("user_id", userID).
 		Int("chatwoot_id", chatwootMessageID).
+		Int("chatwoot_conversation_id", chatwootConversationID).
 		Str("media_type", string(mediaData.MessageType)).
 		Str("file_name", mediaData.FileName).
 		Msg("📥 saveMediaMessageToDB called for media")
@@ -2179,14 +2182,15 @@ func saveMediaMessageToDB(db *sqlx.DB, evt *events.Message, userID string, media
 	}
 	
 	msg := MessageRecord{
-		ID:                evt.Info.ID,
-		UserID:            userID,
-		Content:           content,
-		SenderName:        senderName,
-		MessageType:       string(mediaData.MessageType), // "image", "video", "audio", "document"
-		ChatwootMessageID: &chatwootMessageID,
-		FromMe:            evt.Info.IsFromMe,
-		ChatJID:           evt.Info.Chat.String(),
+		ID:                     evt.Info.ID,
+		UserID:                 userID,
+		Content:                content,
+		SenderName:             senderName,
+		MessageType:            string(mediaData.MessageType), // "image", "video", "audio", "document"
+		ChatwootMessageID:      &chatwootMessageID,
+		ChatwootConversationID: &chatwootConversationID,
+		FromMe:                 evt.Info.IsFromMe,
+		ChatJID:                evt.Info.Chat.String(),
 	}
 	
 	return SaveMessage(db, msg)

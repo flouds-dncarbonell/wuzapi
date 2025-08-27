@@ -460,4 +460,49 @@ func getChatwootStats(db *sqlx.DB, userID string) map[string]interface{} {
 	}
 }
 
+// CleanupMessagesHandler força limpeza manual de mensagens antigas
+func CleanupMessagesHandler(db *sqlx.DB, respond func(http.ResponseWriter, *http.Request, int, interface{})) http.HandlerFunc {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Info().Msg("🧹 Manual message cleanup requested")
+		
+		userinfo := r.Context().Value("userinfo").(Values)
+		userID := userinfo.Get("Id")
+		
+		log.Info().Str("userID", userID).Msg("Starting manual message cleanup")
+		
+		err := CleanupOldMessages(db)
+		if err != nil {
+			log.Error().
+				Err(err).
+				Str("userID", userID).
+				Msg("❌ Manual message cleanup failed")
+			respond(w, r, http.StatusInternalServerError, "Failed to cleanup messages: "+err.Error())
+			return
+		}
+		
+		cleanupResponse := map[string]interface{}{
+			"status":  "success",
+			"message": "Message cleanup completed successfully",
+			"details": map[string]interface{}{
+				"strategy": "Intelligent cleanup - preserve last 30 days of active conversations, remove inactive conversations older than 90 days",
+				"executed_at": "now",
+			},
+		}
+		
+		responseJson, err := json.Marshal(cleanupResponse)
+		if err != nil {
+			log.Error().Err(err).Str("userID", userID).Msg("Failed to marshal cleanup response")
+			respond(w, r, http.StatusInternalServerError, err.Error())
+			return
+		}
+		
+		log.Info().
+			Str("userID", userID).
+			Str("responseJson", string(responseJson)).
+			Msg("✅ Manual message cleanup completed successfully")
+		
+		respond(w, r, http.StatusOK, string(responseJson))
+	})
+}
+
 // Função respondJSON removida - usando padrão S3 com json.Marshal direto nos handlers

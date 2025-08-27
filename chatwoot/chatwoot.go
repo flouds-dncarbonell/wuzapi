@@ -71,6 +71,11 @@ func (h *HandlerWrapper) TestConnection() http.HandlerFunc {
 	return TestConnectionHandler(h.db, h.respond)
 }
 
+// CleanupMessages retorna o handler para limpeza manual de mensagens
+func (h *HandlerWrapper) CleanupMessages() http.HandlerFunc {
+	return CleanupMessagesHandler(h.db, h.respond)
+}
+
 // Webhook retorna o handler para processar webhooks do Chatwoot
 func (h *HandlerWrapper) Webhook() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

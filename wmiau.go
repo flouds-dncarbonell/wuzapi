@@ -477,6 +477,11 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 			log.Error().Err(err).Msg(sqlStmt)
 			return
 		}
+		
+		// NOVO: Parar monitor de reconexão se estiver ativo
+		if chatwoot.GlobalReconnectionManager != nil {
+			go chatwoot.GlobalReconnectionManager.StopMonitoring(mycli.userID)
+		}
 	case *events.PairSuccess:
 		log.Info().Str("userid", mycli.userID).Str("token", mycli.token).Str("ID", evt.ID.String()).Str("BusinessName", evt.BusinessName).Str("Platform", evt.Platform).Msg("QR Pair Success")
 		jid := evt.ID
@@ -963,6 +968,12 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 		postmap["type"] = "Disconnected"
 		dowebhook = 1
 		log.Info().Str("reason", fmt.Sprintf("%+v", evt)).Msg("Disconnected from Whatsapp")
+		
+		// NOVO: Iniciar monitor de reconexão e notificar Chatwoot
+		if chatwoot.GlobalReconnectionManager != nil {
+			go chatwoot.GlobalReconnectionManager.StartMonitoring(mycli.userID)
+			go chatwoot.GlobalReconnectionManager.NotifyDisconnection(mycli.userID)
+		}
 	case *events.ConnectFailure:
 		postmap["type"] = "ConnectFailure"
 		dowebhook = 1
