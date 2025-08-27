@@ -402,14 +402,25 @@ func (c *Client) CreateContact(phone, name, avatarURL string, inboxID int) (*Con
 	}
 
 	var result struct {
-		Payload Contact `json:"payload"`
+		Payload struct {
+			Contact Contact `json:"contact"`
+		} `json:"payload"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("error decoding create contact response: %w", err)
 	}
 
-	return &result.Payload, nil
+	contact := &result.Payload.Contact
+	
+	log.Info().
+		Str("name", contact.Name).
+		Str("phone", contact.PhoneNumber).
+		Str("avatar_url", contact.AvatarURL).
+		Int("contactID", contact.ID).
+		Msg("Created new contact in Chatwoot")
+
+	return contact, nil
 }
 
 // UpdateContact atualiza um contato existente no Chatwoot
@@ -447,8 +458,11 @@ func (c *Client) UpdateContact(contactID int, name, avatarURL string) (*Contact,
 		return nil, err
 	}
 
+	// UpdateContact usa mesmo formato de CreateContact
 	var result struct {
-		Payload Contact `json:"payload"`
+		Payload struct {
+			Contact Contact `json:"contact"`
+		} `json:"payload"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -461,7 +475,7 @@ func (c *Client) UpdateContact(contactID int, name, avatarURL string) (*Contact,
 		Str("avatar_url", avatarURL).
 		Msg("Successfully updated contact in Chatwoot")
 
-	return &result.Payload, nil
+	return &result.Payload.Contact, nil
 }
 
 // FindConversation busca uma conversa ativa para o contato

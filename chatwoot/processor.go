@@ -1062,6 +1062,15 @@ func sendTextMessageWithReplyRetryAndSave(client *Client, config *Config, phone 
 				Int("conversationID", conversationID).
 				Msg("Conversation not found (404), recreating and retrying...")
 			
+			// Limpar cache da conversa inválida
+			inboxID, _ := getInboxID(client, config)
+			cacheKey := fmt.Sprintf("conversation:%s:%d", phone, inboxID)
+			GlobalCache.conversations.Delete(cacheKey)
+			
+			log.Debug().
+				Str("cacheKey", cacheKey).
+				Msg("Invalidated conversation cache due to 404")
+			
 			// Recriar conversa
 			contact, contactErr := findOrCreateContact(client, phone, "", config, userID)
 			if contactErr != nil {
@@ -1116,6 +1125,15 @@ func sendTextMessageWithReplyRetry(client *Client, config *Config, phone string,
 				Str("phone", phone).
 				Int("conversationID", conversationID).
 				Msg("Conversation not found (404), recreating and retrying...")
+			
+			// Limpar cache da conversa inválida
+			inboxID, _ := getInboxID(client, config)
+			cacheKey := fmt.Sprintf("conversation:%s:%d", phone, inboxID)
+			GlobalCache.conversations.Delete(cacheKey)
+			
+			log.Debug().
+				Str("cacheKey", cacheKey).
+				Msg("Invalidated conversation cache due to 404")
 			
 			// Recriar conversa
 			contact, contactErr := findOrCreateContact(client, phone, "", config, config.UserID)
