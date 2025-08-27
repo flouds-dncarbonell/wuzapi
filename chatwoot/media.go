@@ -30,6 +30,8 @@ func downloadWhatsAppMedia(client *whatsmeow.Client, evt *events.Message) (*Medi
 		mediaData, err = downloadAudioMessage(client, evt.Message.AudioMessage)
 	} else if evt.Message.DocumentMessage != nil {
 		mediaData, err = downloadDocumentMessage(client, evt.Message.DocumentMessage)
+	} else if evt.Message.StickerMessage != nil {
+		mediaData, err = downloadStickerMessage(client, evt.Message.StickerMessage)
 	} else {
 		return nil, fmt.Errorf("unsupported media type")
 	}
@@ -212,6 +214,32 @@ func ValidateMediaData(mediaData *MediaData) error {
 		Msg("Media data validation passed")
 
 	return nil
+}
+
+// downloadStickerMessage baixa mensagem de sticker
+func downloadStickerMessage(client *whatsmeow.Client, msg *waE2E.StickerMessage) (*MediaData, error) {
+	data, err := client.Download(context.Background(), msg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download sticker: %w", err)
+	}
+
+	mimeType := "image/webp" // default para stickers
+	if msg.Mimetype != nil {
+		mimeType = *msg.Mimetype
+	}
+
+	var fileName string
+	// StickerMessage não tem FileName, gerar nome baseado no tipo
+	fileName = GenerateFileName("sticker", mimeType)
+
+	return &MediaData{
+		Data:        data,
+		MimeType:    mimeType,
+		FileName:    fileName,
+		Caption:     "", // Sem caption - apenas mídia pura
+		FileSize:    int64(len(data)),
+		MessageType: MediaTypeSticker,
+	}, nil
 }
 
 // GetMediaInfo extrai informações da mídia para logging

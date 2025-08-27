@@ -911,10 +911,10 @@ func extractMessageContent(msg *waE2E.Message) string {
 		return reactionEmoji
 	}
 	
-	// Para stickers, retornar texto indicativo já que não têm caption
+	// Para stickers, não retornar texto - será tratado como mídia pura
 	if msg.StickerMessage != nil {
 		log.Debug().Msg("Sticker message detected - no text content")
-		return "_<Sticker>_" // Texto indicativo para sticker
+		return "" // Sem texto - apenas mídia
 	}
 	
 	log.Debug().Msg("No text content found in message")
@@ -1876,11 +1876,21 @@ func processGroupMediaMessage(client *Client, config *Config, evt *events.Messag
 		if mediaData.Caption != "" {
 			mediaData.Caption = fmt.Sprintf("**%s:**\n\n%s", senderInfo, mediaData.Caption)
 		} else if textContent != "" {
-			// Se há conteúdo de texto processado, usar como caption
-			mediaData.Caption = fmt.Sprintf("**%s:**\n\n%s", senderInfo, textContent)
+			// Se textContent já tem prefixo (vem do processamento de grupos)
+			// Para stickers, substituir o conteúdo vazio por texto descritivo
+			if mediaData.MessageType == MediaTypeSticker && strings.HasSuffix(textContent, ":\n\n") {
+				mediaData.Caption = fmt.Sprintf("**%s:** Enviou um sticker", senderInfo)
+			} else {
+				mediaData.Caption = textContent
+			}
 		} else {
-			// Apenas indicar que é mídia do participante
-			mediaData.Caption = fmt.Sprintf("**%s** enviou uma mídia", senderInfo)
+			// Para stickers sem prefixo (mensagens próprias), usar formato mais limpo
+			if mediaData.MessageType == MediaTypeSticker {
+				mediaData.Caption = fmt.Sprintf("**%s:** Enviou um sticker", senderInfo)
+			} else {
+				// Para outras mídias, formato genérico
+				mediaData.Caption = fmt.Sprintf("**%s** enviou uma mídia", senderInfo)
+			}
 		}
 	}
 	// Para mensagens do próprio bot (IsFromMe=true), usar caption original ou conteúdo sem prefixo

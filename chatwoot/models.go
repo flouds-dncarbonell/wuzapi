@@ -318,6 +318,7 @@ const (
 	MediaTypeVideo    MediaType = "video"
 	MediaTypeAudio    MediaType = "audio"
 	MediaTypeDocument MediaType = "document"
+	MediaTypeSticker  MediaType = "sticker"
 )
 
 // MediaInfo contém informações da mídia para Chatwoot
