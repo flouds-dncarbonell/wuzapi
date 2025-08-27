@@ -667,6 +667,27 @@
           <textarea id="chatwootIgnoreJids" placeholder="Enter phone numbers to ignore, one per line (e.g., 5511999999999)" rows="3"></textarea>
           <small>Phone numbers that should be ignored and not synced to Chatwoot</small>
         </div>
+
+        <!-- Group Settings -->
+        <h4 class="ui dividing header">Group Settings</h4>
+        <div class="field">
+          <div class="ui toggle checkbox">
+            <input type="checkbox" id="chatwootIgnoreGroups" checked>
+            <label>Ignore Groups</label>
+          </div>
+          <small>Ignore all group messages (if disabled, groups will be processed based on settings below)</small>
+        </div>
+        
+        <!-- Typing Indicator Settings -->
+        <h4 class="ui dividing header">Chat Features</h4>
+        <div class="field">
+          <div class="ui toggle checkbox">
+            <input type="checkbox" id="chatwootEnableTypingIndicator">
+            <label>Enable Typing Indicator</label>
+          </div>
+          <small>Show "typing..." indicator in WhatsApp when agents are typing in Chatwoot</small>
+        </div>
+        
       </div>
     </div>
     <div class="actions">

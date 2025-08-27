@@ -60,6 +60,41 @@ var migrations = []Migration{
 		Name:  "add_chatwoot_support",
 		UpSQL: addChatwootSupportSQL,
 	},
+	{
+		ID:    7,
+		Name:  "add_chatwoot_groups_support",
+		UpSQL: addChatwootGroupsSupportSQL,
+	},
+	{
+		ID:    8,
+		Name:  "remove_chatwoot_process_group_participants",
+		UpSQL: removeChatwootProcessGroupParticipantsSQL,
+	},
+	{
+		ID:    9,
+		Name:  "remove_chatwoot_group_mention_only",
+		UpSQL: removeChatwootGroupMentionOnlySQL,
+	},
+	{
+		ID:    10,
+		Name:  "add_chatwoot_typing_indicator",
+		UpSQL: addChatwootTypingIndicatorSQL,
+	},
+	{
+		ID:    11,
+		Name:  "create_messages_table",
+		UpSQL: createMessagesTableSQL,
+	},
+	{
+		ID:    12,
+		Name:  "add_messages_updated_at",
+		UpSQL: addMessagesUpdatedAtSQL,
+	},
+	{
+		ID:    13,
+		Name:  "add_chatwoot_conversation_id",
+		UpSQL: addChatwootConversationIdSQL,
+	},
 }
 
 const changeIDToStringSQL = `
@@ -376,6 +411,36 @@ func applyMigration(db *sqlx.DB, migration Migration) error {
 		} else {
 			_, err = tx.Exec(migration.UpSQL)
 		}
+	} else if migration.ID == 11 {
+		if db.DriverName() == "sqlite" {
+			err = createTableIfNotExistsSQLite(tx, "messages", `
+                CREATE TABLE messages (
+                    id TEXT PRIMARY KEY,              -- WhatsApp message ID (evt.Info.ID)
+                    user_id TEXT NOT NULL,           -- Referência ao usuário
+                    content TEXT DEFAULT '',         -- Conteúdo da mensagem
+                    sender_name TEXT DEFAULT '',     -- Nome do remetente
+                    message_type TEXT DEFAULT 'text', -- "text", "image", "video", "audio", "document"
+                    chatwoot_message_id INTEGER,     -- ID da mensagem no Chatwoot (NULL até ser enviada)
+                    from_me BOOLEAN DEFAULT 0,       -- evt.Info.IsFromMe (SQLite usa 0/1 para boolean)
+                    chat_jid TEXT NOT NULL,          -- evt.Info.Chat para lookup
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )`)
+			// Adicionar índices SQLite
+			if err == nil {
+				_, err = tx.Exec("CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id)")
+			}
+			if err == nil {
+				_, err = tx.Exec("CREATE INDEX IF NOT EXISTS idx_messages_chatwoot_id ON messages(chatwoot_message_id)")
+			}
+			if err == nil {
+				_, err = tx.Exec("CREATE INDEX IF NOT EXISTS idx_messages_chat_jid ON messages(chat_jid)")
+			}
+			if err == nil {
+				_, err = tx.Exec("CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)")
+			}
+		} else {
+			_, err = tx.Exec(migration.UpSQL)
+		}
 	} else {
 		_, err = tx.Exec(migration.UpSQL)
 	}
@@ -598,4 +663,155 @@ BEGIN
         );
     END IF;
 END $$;
+`
+
+const addChatwootGroupsSupportSQL = `
+DO $$
+BEGIN
+    -- Adicionar campo ignore_groups se não existir
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'chatwoot_configs' AND column_name = 'ignore_groups'
+    ) THEN
+        ALTER TABLE chatwoot_configs ADD COLUMN ignore_groups BOOLEAN DEFAULT TRUE;
+    END IF;
+    
+    -- Adicionar campo process_group_participants se não existir
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'chatwoot_configs' AND column_name = 'process_group_participants'
+    ) THEN
+        ALTER TABLE chatwoot_configs ADD COLUMN process_group_participants BOOLEAN DEFAULT TRUE;
+    END IF;
+    
+    -- Adicionar campo group_mention_only se não existir
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'chatwoot_configs' AND column_name = 'group_mention_only'
+    ) THEN
+        ALTER TABLE chatwoot_configs ADD COLUMN group_mention_only BOOLEAN DEFAULT FALSE;
+    END IF;
+END $$;
+`
+
+const removeChatwootProcessGroupParticipantsSQL = `
+DO $$
+BEGIN
+    -- Remover campo process_group_participants se existir
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'chatwoot_configs' AND column_name = 'process_group_participants'
+    ) THEN
+        ALTER TABLE chatwoot_configs DROP COLUMN process_group_participants;
+    END IF;
+END $$;
+`
+
+const removeChatwootGroupMentionOnlySQL = `
+DO $$
+BEGIN
+    -- Remover campo group_mention_only se existir
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'chatwoot_configs' AND column_name = 'group_mention_only'
+    ) THEN
+        ALTER TABLE chatwoot_configs DROP COLUMN group_mention_only;
+    END IF;
+END $$;
+`
+
+const addChatwootTypingIndicatorSQL = `
+DO $$
+BEGIN
+    -- Adicionar campo enable_typing_indicator se não existir
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'chatwoot_configs' AND column_name = 'enable_typing_indicator'
+    ) THEN
+        ALTER TABLE chatwoot_configs ADD COLUMN enable_typing_indicator BOOLEAN DEFAULT FALSE;
+    END IF;
+END $$;
+`
+
+const createMessagesTableSQL = `
+-- Criar tabela messages para histórico e vinculação WhatsApp ↔ Chatwoot
+-- PostgreSQL version
+DO $$
+BEGIN
+    -- Criar tabela se não existir
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.tables 
+        WHERE table_name = 'messages'
+    ) THEN
+        CREATE TABLE messages (
+            id TEXT PRIMARY KEY,              -- WhatsApp message ID (evt.Info.ID)
+            user_id TEXT NOT NULL,           -- Referência ao usuário
+            content TEXT DEFAULT '',         -- Conteúdo da mensagem
+            sender_name TEXT DEFAULT '',     -- Nome do remetente
+            message_type TEXT DEFAULT 'text', -- "text", "image", "video", "audio", "document"
+            chatwoot_message_id INTEGER,     -- ID da mensagem no Chatwoot (NULL até ser enviada)
+            from_me BOOLEAN DEFAULT FALSE,   -- evt.Info.IsFromMe
+            chat_jid TEXT NOT NULL,          -- evt.Info.Chat para lookup
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        
+        -- Índices para performance
+        CREATE INDEX idx_messages_user_id ON messages(user_id);
+        CREATE INDEX idx_messages_chatwoot_id ON messages(chatwoot_message_id);
+        CREATE INDEX idx_messages_chat_jid ON messages(chat_jid);
+        CREATE INDEX idx_messages_created_at ON messages(created_at);
+        
+    END IF;
+END $$;
+
+-- SQLite version (fallback)
+-- Esta versão será executada via código se for SQLite
+`
+
+const addMessagesUpdatedAtSQL = `
+-- Adicionar coluna updated_at à tabela messages para controle anti-loop
+-- PostgreSQL version
+DO $$
+BEGIN
+    -- Adicionar coluna se não existir
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'messages' AND column_name = 'updated_at'
+    ) THEN
+        ALTER TABLE messages ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+        
+        -- Criar índice para performance
+        CREATE INDEX idx_messages_updated_at ON messages(updated_at);
+        
+        -- Inicializar updated_at com valor de created_at para registros existentes
+        UPDATE messages SET updated_at = created_at WHERE updated_at IS NULL;
+        
+    END IF;
+END $$;
+
+-- SQLite version (fallback)
+-- Esta versão será executada via código se for SQLite
+`
+
+const addChatwootConversationIdSQL = `
+-- Adicionar coluna chatwoot_conversation_id à tabela messages para deleção bidirecional
+-- PostgreSQL version
+DO $$
+BEGIN
+    -- Adicionar coluna se não existir
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'messages' AND column_name = 'chatwoot_conversation_id'
+    ) THEN
+        ALTER TABLE messages ADD COLUMN chatwoot_conversation_id INTEGER;
+        
+        -- Criar índice para performance
+        CREATE INDEX idx_messages_chatwoot_conv_id ON messages(chatwoot_conversation_id);
+        
+    END IF;
+END $$;
+
+-- SQLite version (fallback)
+-- Esta versão será executada via código se for SQLite
 `

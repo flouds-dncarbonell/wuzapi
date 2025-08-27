@@ -1843,13 +1843,20 @@ function initializeChatwootConfig() {
   });
   $('#chatwootReopenConversation').checkbox();
   $('#chatwootConversationPending').checkbox();
+  
+  // Initialize group-related checkboxes
+  $('#chatwootIgnoreGroups').checkbox();
+  
+  // Initialize typing indicator checkbox
+  $('#chatwootEnableTypingIndicator').checkbox();
 
   // Click handler for Chatwoot config card
   $('#chatwootConfig').click(function() {
-    loadChatwootConfig();
     $('#modalChatwootConfig').modal({
       closable: true,
-      onShow: function() {
+      onShow: async function() {
+        // Load config first, then update status to avoid race condition
+        await loadChatwootConfig();
         updateChatwootStatus();
       }
     }).modal('show');
@@ -1949,6 +1956,12 @@ function populateChatwootForm(config) {
   $('#chatwootAccountId').val(config.account_id || '');
   
   console.log('- token: [HIDDEN FOR SECURITY]');
+  // Show placeholder if token exists (marked as "***" by backend), but keep field empty for security
+  if (config.token && config.token === '***') {
+    $('#chatwootToken').attr('placeholder', '••••••••••••••••••••');
+  } else {
+    $('#chatwootToken').attr('placeholder', '');
+  }
   $('#chatwootToken').val(''); // Don't show token for security
   
   console.log('- name_inbox:', config.name_inbox || 'WhatsApp Support');
@@ -1997,6 +2010,20 @@ function populateChatwootForm(config) {
   console.log('- ConversationPending checkbox:', config.conversation_pending ? 'check' : 'uncheck');
   $('#chatwootConversationPending').checkbox(config.conversation_pending ? 'check' : 'uncheck');
   
+  // Group settings - set defaults if not present
+  const ignoreGroups = config.ignore_groups !== undefined ? config.ignore_groups : true;
+  
+  console.log('- IgnoreGroups checkbox:', ignoreGroups ? 'check' : 'uncheck');
+  $('#chatwootIgnoreGroups').prop('checked', ignoreGroups);
+  $('#chatwootIgnoreGroups').checkbox(ignoreGroups ? 'check' : 'uncheck');
+  
+  // Typing indicator setting - set defaults if not present
+  const enableTypingIndicator = config.enable_typing_indicator || false;
+  
+  console.log('- EnableTypingIndicator checkbox:', enableTypingIndicator ? 'check' : 'uncheck');
+  $('#chatwootEnableTypingIndicator').prop('checked', enableTypingIndicator);
+  $('#chatwootEnableTypingIndicator').checkbox(enableTypingIndicator ? 'check' : 'uncheck');
+  
   // Show/hide sign delimiter field
   if (config.sign_msg) {
     console.log('- Showing sign delimiter field');
@@ -2005,6 +2032,7 @@ function populateChatwootForm(config) {
     console.log('- Hiding sign delimiter field');
     $('#chatwootSignDelimiterField').hide();
   }
+  
   
   console.log('=== FINISHED POPULATE CHATWOOT FORM ===');
   
@@ -2021,7 +2049,7 @@ function clearChatwootForm() {
   $('#chatwootEnabled').prop('checked', false);
   $('#chatwootUrl').val('');
   $('#chatwootAccountId').val('');
-  $('#chatwootToken').val('');
+  $('#chatwootToken').val('').attr('placeholder', '');
   $('#chatwootInboxName').val('WhatsApp Support');
   $('#chatwootSignMsg').prop('checked', false);
   $('#chatwootSignDelimiter').val('\n');
@@ -2029,29 +2057,49 @@ function clearChatwootForm() {
   $('#chatwootConversationPending').prop('checked', false);
   $('#chatwootIgnoreJids').val('');
   
+  // Group settings - set defaults
+  $('#chatwootIgnoreGroups').prop('checked', true);
+  
   // Update checkbox states
   $('#chatwootEnabledToggle').checkbox('uncheck');
   $('#chatwootSignMsg').checkbox('uncheck');
   $('#chatwootReopenConversation').checkbox('check');
   $('#chatwootConversationPending').checkbox('uncheck');
+  $('#chatwootIgnoreGroups').checkbox('check');
   
   $('#chatwootSignDelimiterField').hide();
 }
 
 // Save Chatwoot configuration
 async function saveChatwootConfig() {
+  const button = $('#saveChatwootConfig');
+  const originalText = button.html();
+  
+  // Disable button during request
+  button.prop('disabled', true).addClass('loading');
+  button.html('<i class="spinner loading icon"></i>Saving...');
+  
   const myHeaders = new Headers();
   myHeaders.append("Content-Type", "application/json");
   myHeaders.append("token", getLocalStorageItem('token'));
   
-  // Validate required fields
+  // Validate required fields - always validate even if not enabled
   const url = $('#chatwootUrl').val().trim();
   const accountId = $('#chatwootAccountId').val().trim();
   const token = $('#chatwootToken').val().trim();
   
-  if ($('#chatwootEnabled').is(':checked')) {
-    if (!url || !accountId || !token) {
-      showError('URL, Account ID, and API Token are required when Chatwoot is enabled');
+  // Always validate data integrity, regardless of enabled state
+  if ((url || accountId || token)) {
+    if (!url || !accountId) {
+      showError('URL and Account ID are required when configuring Chatwoot');
+      button.prop('disabled', false).removeClass('loading').html(originalText);
+      return;
+    }
+    
+    // For enabled state, token is required unless we're preserving existing one
+    if ($('#chatwootEnabled').is(':checked') && !token && !$('#chatwootToken').attr('placeholder').includes('••••')) {
+      showError('API Token is required when enabling Chatwoot');
+      button.prop('disabled', false).removeClass('loading').html(originalText);
       return;
     }
   }
@@ -2067,14 +2115,20 @@ async function saveChatwootConfig() {
     enabled: $('#chatwootEnabled').is(':checked'),
     url: url,
     account_id: accountId,
-    token: token,
     name_inbox: $('#chatwootInboxName').val().trim() || 'WhatsApp Support',
     sign_msg: $('#chatwootSignMsg').is(':checked'),
     sign_delimiter: $('#chatwootSignDelimiter').val() || '\n',
     reopen_conversation: $('#chatwootReopenConversation').is(':checked'),
     conversation_pending: $('#chatwootConversationPending').is(':checked'),
-    ignore_jids: JSON.stringify(ignoreJids)
+    ignore_jids: JSON.stringify(ignoreJids),
+    ignore_groups: $('#chatwootIgnoreGroups').is(':checked'),
+    enable_typing_indicator: $('#chatwootEnableTypingIndicator').is(':checked')
   };
+  
+  // Only send token if it's not empty (backend will preserve existing token if not provided)
+  if (token) {
+    config.token = token;
+  }
   
   try {
     const res = await fetch(baseUrl + "/chatwoot/config", {
@@ -2083,17 +2137,31 @@ async function saveChatwootConfig() {
       body: JSON.stringify(config)
     });
     
-    const data = await res.json();
     if (res.status === 200) {
+      const data = await res.json();
       showSuccess('Chatwoot configuration saved successfully');
       $('#modalChatwootConfig').modal('hide');
       $('#deleteChatwootConfig').show();
+    } else if (res.status === 401) {
+      showError('Authentication failed. Please check your access token.');
+    } else if (res.status === 403) {
+      showError('Access denied. You don\'t have permission to perform this action.');
+    } else if (res.status >= 500) {
+      showError('Server error. Please try again later.');
     } else {
-      showError('Failed to save Chatwoot configuration: ' + (data.error || 'Unknown error'));
+      try {
+        const data = await res.json();
+        showError('Failed to save configuration: ' + (data.error || 'Unknown error'));
+      } catch (parseError) {
+        showError('Failed to save configuration (Status ' + res.status + ')');
+      }
     }
   } catch (error) {
-    showError('Error saving Chatwoot configuration');
-    console.error('Error:', error);
+    console.error('Error saving Chatwoot configuration:', error);
+    showError('Network error: ' + error.message);
+  } finally {
+    // Always restore button state
+    button.prop('disabled', false).removeClass('loading').html(originalText);
   }
 }
 
@@ -2116,7 +2184,8 @@ async function testChatwootConnection() {
     reopen_conversation: $('#chatwootReopenConversation').is(':checked'),
     conversation_pending: $('#chatwootConversationPending').is(':checked'),
     merge_brazil_contacts: false, // Campo não existe no HTML atual
-    ignore_jids: $('#chatwootIgnoreJids').val() || '[]'
+    ignore_jids: $('#chatwootIgnoreJids').val() || '[]',
+    ignore_groups: $('#chatwootIgnoreGroups').is(':checked')
   };
   
   console.log('Form data collected for test:', {
@@ -2127,7 +2196,7 @@ async function testChatwootConnection() {
     name_inbox: formData.name_inbox
   });
   
-  // Validate required fields
+  // Validate required fields - token must always be provided for testing
   if (!formData.url || !formData.account_id || !formData.token) {
     showError('Please fill in URL, Account ID, and Token fields before testing');
     return;
@@ -2177,6 +2246,15 @@ async function testChatwootConnection() {
         console.error('Error parsing success JSON:', jsonError);
         showSuccess('Chatwoot connection test successful!');
       }
+    } else if (res.status === 401) {
+      console.log('Authentication failed (401)');
+      showError('Authentication failed. Please check your Chatwoot API token.');
+    } else if (res.status === 403) {
+      console.log('Access denied (403)');
+      showError('Access denied. Please check your Chatwoot account permissions.');
+    } else if (res.status >= 500) {
+      console.log('Server error (' + res.status + ')');
+      showError('Server error. Please try again later or check your Chatwoot URL.');
     } else {
       console.log('Error response, parsing JSON...');
       try {
@@ -2221,6 +2299,13 @@ async function deleteChatwootConfig() {
     return;
   }
   
+  const button = $('#deleteChatwootConfig');
+  const originalText = button.html();
+  
+  // Disable button during request
+  button.prop('disabled', true).addClass('loading');
+  button.html('<i class="spinner loading icon"></i>Deleting...');
+  
   const myHeaders = new Headers();
   myHeaders.append("Content-Type", "application/json");
   myHeaders.append("token", getLocalStorageItem('token'));
@@ -2236,18 +2321,34 @@ async function deleteChatwootConfig() {
       clearChatwootForm();
       $('#deleteChatwootConfig').hide();
       $('#modalChatwootConfig').modal('hide');
+    } else if (res.status === 401) {
+      showError('Authentication failed. Please check your access token.');
+    } else if (res.status === 403) {
+      showError('Access denied. You don\'t have permission to perform this action.');
+    } else if (res.status >= 500) {
+      showError('Server error. Please try again later.');
     } else {
-      const data = await res.json();
-      showError('Failed to delete Chatwoot configuration: ' + (data.error || 'Unknown error'));
+      try {
+        const data = await res.json();
+        showError('Failed to delete configuration: ' + (data.error || 'Unknown error'));
+      } catch (parseError) {
+        showError('Failed to delete configuration (Status ' + res.status + ')');
+      }
     }
   } catch (error) {
-    showError('Error deleting Chatwoot configuration');
-    console.error('Error:', error);
+    console.error('Error deleting Chatwoot configuration:', error);
+    showError('Network error: ' + error.message);
+  } finally {
+    // Always restore button state
+    button.prop('disabled', false).removeClass('loading').html(originalText);
   }
 }
 
 // Update Chatwoot status
 async function updateChatwootStatus() {
+  console.log('=== STARTING UPDATE CHATWOOT STATUS ===');
+  console.log('Token:', getLocalStorageItem('token') ? 'Present' : 'Missing');
+  
   const myHeaders = new Headers();
   myHeaders.append("Content-Type", "application/json");
   myHeaders.append("token", getLocalStorageItem('token'));
@@ -2258,36 +2359,73 @@ async function updateChatwootStatus() {
       headers: myHeaders
     });
     
+    console.log('Status response:', res.status, res.statusText);
+    
     if (res.status === 200) {
-      const data = await res.json();
-      updateChatwootStatusDisplay(data);
+      const response = await res.json();
+      console.log('Status response received:', response);
+      
+      // Check if response has data envelope structure like other endpoints
+      const statusData = response.data ? response.data : response;
+      console.log('Status data to process:', statusData);
+      
+      updateChatwootStatusDisplay(statusData);
+    } else if (res.status === 401) {
+      console.error('Authentication failed when checking status');
+      updateChatwootStatusDisplay({ configured: false, connected: false, error: 'Authentication failed' });
+    } else if (res.status === 403) {
+      console.error('Access denied when checking status');
+      updateChatwootStatusDisplay({ configured: false, connected: false, error: 'Access denied' });
+    } else if (res.status >= 500) {
+      console.error('Server error when checking status');
+      updateChatwootStatusDisplay({ configured: false, connected: false, error: 'Server error' });
     } else {
-      updateChatwootStatusDisplay({ configured: false, connected: false });
+      console.error('Unknown error when checking status:', res.status);
+      updateChatwootStatusDisplay({ configured: false, connected: false, error: 'Unknown error' });
     }
   } catch (error) {
-    console.error('Error getting Chatwoot status:', error);
-    updateChatwootStatusDisplay({ configured: false, connected: false });
+    console.error('Network error getting Chatwoot status:', error);
+    updateChatwootStatusDisplay({ configured: false, connected: false, error: 'Network error' });
   }
 }
 
 // Update status display
 function updateChatwootStatusDisplay(status) {
+  console.log('=== UPDATING CHATWOOT STATUS DISPLAY ===');
+  console.log('Status object:', status);
+  
   const statusIcon = $('#chatwootStatusIcon');
   const statusText = $('#chatwootStatusText');
   
+  console.log('Status icon element found:', statusIcon.length > 0);
+  console.log('Status text element found:', statusText.length > 0);
+  
   if (status.connected) {
+    console.log('Setting status to: Connected and working (green)');
     statusIcon.removeClass('red yellow').addClass('green');
     statusText.text('Connected and working');
   } else if (status.configured) {
+    console.log('Setting status to: Configured but not connected (yellow)');
     statusIcon.removeClass('red green').addClass('yellow');
-    statusText.text('Configured but not connected');
+    if (status.error) {
+      statusText.text('Configured but connection failed: ' + status.error);
+    } else {
+      statusText.text('Configured but not connected');
+    }
   } else {
+    console.log('Setting status to: Not configured (red)');
     statusIcon.removeClass('green yellow').addClass('red');
-    statusText.text('Not configured');
+    if (status.error) {
+      statusText.text('Not configured - ' + status.error);
+    } else {
+      statusText.text('Not configured');
+    }
   }
 }
 
 // Initialize Chatwoot when document is ready
 $(document).ready(function() {
   initializeChatwootConfig();
+  // Load initial status for the dashboard
+  updateChatwootStatus();
 });

@@ -220,6 +220,7 @@ func main() {
 	
 	// Inicializar cache e wrapper Chatwoot
 	chatwoot.InitCache()
+	chatwoot.SetClientGetter(clientManager)
 	chatwootWrapper = chatwoot.NewHandlerWrapper(db, s.Respond)
 	
 	s.routes()

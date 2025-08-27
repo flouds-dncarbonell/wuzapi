@@ -2,6 +2,7 @@ package chatwoot
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/jmoiron/sqlx"
@@ -48,7 +49,7 @@ func SetConfigHandler(db *sqlx.DB, respond func(http.ResponseWriter, *http.Reque
 		// Definir userID a partir do contexto
 		config.UserID = userID
 
-		// Validar configuração
+		// Validar configuração básica
 		log.Info().Str("userID", userID).Msg("Validating config")
 		if err := ValidateConfig(config); err != nil {
 			log.Error().Err(err).Str("userID", userID).Msg("Invalid Chatwoot config")
@@ -56,10 +57,35 @@ func SetConfigHandler(db *sqlx.DB, respond func(http.ResponseWriter, *http.Reque
 			return
 		}
 
-		// Testar conectividade com Chatwoot se habilitado
+		// Verificar se é uma nova configuração ou atualização
+		existingConfig, err := GetConfigByUserID(db, userID)
+		isNewConfig := (err != nil && err.Error() == "sql: no rows in result set")
+		
+		// Para nova configuração, token é obrigatório
+		if isNewConfig && config.Token == "" {
+			log.Error().Str("userID", userID).Msg("Token is required for new configuration")
+			respond(w, r, http.StatusBadRequest, "Token is required for new configuration")
+			return
+		}
+
+		// Para configuração habilitada, token é obrigatório (novo ou existente)
 		if config.Enabled {
+			effectiveToken := config.Token
+			if !isNewConfig && config.Token == "" && existingConfig != nil {
+				effectiveToken = existingConfig.Token
+			}
+			
+			if effectiveToken == "" {
+				log.Error().Str("userID", userID).Msg("Token is required when Chatwoot is enabled")
+				respond(w, r, http.StatusBadRequest, "Token is required when Chatwoot is enabled")
+				return
+			}
+
+			// Testar conectividade com Chatwoot se habilitado
 			log.Info().Str("userID", userID).Msg("Testing connection before saving")
-			client := NewClient(config)
+			testConfig := config
+			testConfig.Token = effectiveToken
+			client := NewClient(testConfig)
 			if err := client.TestConnection(); err != nil {
 				log.Error().Err(err).Str("userID", userID).Msg("Failed to connect to Chatwoot during save")
 				respond(w, r, http.StatusBadRequest, "Unable to connect to Chatwoot: "+err.Error())
@@ -138,9 +164,11 @@ func GetConfigHandler(db *sqlx.DB, respond func(http.ResponseWriter, *http.Reque
 			return
 		}
 		
-		// Remover token por segurança
+		// Mascarar token por segurança, mas indicar se existe
 		configResponse := *config
-		configResponse.Token = ""
+		if configResponse.Token != "" {
+			configResponse.Token = "***" // Indica que existe um token sem mostrá-lo
+		}
 		
 		log.Info().
 			Str("userID", userID).
@@ -367,8 +395,12 @@ func TestConnectionHandler(db *sqlx.DB, respond func(http.ResponseWriter, *http.
 		
 		client := NewClient(testConfig)
 		
-		log.Info().Str("userID", userID).Msg("Starting connection test")
-		if err := client.TestConnection(); err != nil {
+		log.Info().
+			Str("userID", userID).
+			Str("name_inbox", testConfig.NameInbox).
+			Msg("Starting connection test with inbox validation")
+		
+		if err := client.TestConnectionWithInbox(testConfig.NameInbox); err != nil {
 			log.Error().
 				Err(err).
 				Str("userID", userID).
@@ -385,9 +417,26 @@ func TestConnectionHandler(db *sqlx.DB, respond func(http.ResponseWriter, *http.
 			Bool("useFormData", useFormData).
 			Msg("Chatwoot connection test successful")
 		
+		// Preparar resposta de sucesso com informações detalhadas
 		testResponse := map[string]interface{}{
 			"status":  "success",
 			"message": "Connection to Chatwoot successful",
+			"details": map[string]interface{}{
+				"url":         testConfig.URL,
+				"account_id":  testConfig.AccountID,
+				"name_inbox":  testConfig.NameInbox,
+				"inbox_validated": testConfig.NameInbox != "",
+			},
+		}
+		
+		// Se inbox foi especificado, buscar informações detalhadas
+		if testConfig.NameInbox != "" {
+			client := NewClient(testConfig)
+			if inbox, err := client.GetInboxByName(testConfig.NameInbox); err == nil && inbox != nil {
+				testResponse["details"].(map[string]interface{})["inbox_id"] = inbox.ID
+				testResponse["details"].(map[string]interface{})["inbox_found"] = true
+				testResponse["message"] = fmt.Sprintf("Connection successful - Inbox '%s' validated", testConfig.NameInbox)
+			}
 		}
 		responseJson, err := json.Marshal(testResponse)
 		if err != nil {
