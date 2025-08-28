@@ -44,6 +44,18 @@ type Contact struct {
 	AvatarURL   string `json:"avatar_url,omitempty"`
 }
 
+// AdInfo contém informações de um anúncio extraído de mensagens promocionais
+type AdInfo struct {
+	Title        string `json:"title"`
+	Body         string `json:"body"`
+	SourceURL    string `json:"source_url"`
+	ThumbnailURL string `json:"thumbnail_url"`
+	Thumbnail    string `json:"thumbnail_base64"`
+	SourceApp    string `json:"source_app"`
+	SourceType   string `json:"source_type"`
+	MediaURL     string `json:"media_url"`
+}
+
 // ReplyInfo contém informações de uma mensagem sendo citada
 type ReplyInfo struct {
 	InReplyToExternalID  string `json:"in_reply_to_external_id"` // StanzaID do WhatsApp

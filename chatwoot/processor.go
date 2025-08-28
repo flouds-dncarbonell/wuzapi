@@ -1,7 +1,10 @@
 package chatwoot
 
 import (
+	"encoding/base64"
 	"fmt"
+	"net/http"
+	"io"
 	"strings"
 	"time"
 
@@ -262,7 +265,13 @@ func processIndividualMessage(client *Client, config *Config, evt *events.Messag
 		// TODO: Processar mídia com reply
 		return processMediaMessage(client, config, evt, userID, conversation.ID, messageType, db)
 	} else if content != "" {
-		// Processar texto com reply e salvar mensagem
+		// 6.1. Verificar se é mensagem de anúncio
+		adInfo := extractAdInfo(evt.Message)
+		if adInfo != nil {
+			return processAdMessage(client, config, evt, userID, conversation.ID, messageType, content, adInfo, replyInfo, db)
+		}
+		
+		// Processar texto normal com reply e salvar mensagem
 		chatwootMsg, err := sendTextMessageWithReplyRetryAndSave(client, config, phone, conversation.ID, content, evt.Info.ID, messageType, replyInfo, db, userID, evt)
 		if err != nil {
 			return err
@@ -448,6 +457,13 @@ func processGroupAsContact(client *Client, config *Config, evt *events.Message, 
 		// TODO: Processar mídia de grupo com reply
 		return processGroupMediaMessage(client, config, evt, userID, conversation.ID, messageType, content, db)
 	} else if content != "" {
+		// 7.1. Verificar se é mensagem de anúncio antes de adicionar prefixo do grupo
+		originalContent := extractMessageContent(evt.Message) // Conteúdo original sem prefixo
+		adInfo := extractAdInfo(evt.Message)
+		if adInfo != nil {
+			return processGroupAdMessage(client, config, evt, userID, conversation.ID, messageType, originalContent, content, adInfo, replyInfo, db)
+		}
+		
 		// Processar texto de grupo com reply e salvar mensagem
 		chatwootMsg, err := sendTextMessageWithReplyRetryAndSave(client, config, groupPhone, conversation.ID, content, evt.Info.ID, messageType, replyInfo, db, userID, evt)
 		if err != nil {
@@ -998,6 +1014,314 @@ func extractQuotedMessageID(evt *events.Message) string {
 	}
 	
 	return ""
+}
+
+// extractAdInfo extrai informações de anúncio de uma mensagem ExtendedTextMessage
+func extractAdInfo(msg *waE2E.Message) *AdInfo {
+	if msg.ExtendedTextMessage == nil || 
+	   msg.ExtendedTextMessage.ContextInfo == nil ||
+	   msg.ExtendedTextMessage.ContextInfo.ExternalAdReply == nil {
+		return nil
+	}
+	
+	adReply := msg.ExtendedTextMessage.ContextInfo.ExternalAdReply
+	
+	adInfo := &AdInfo{
+		Title:        getStringValue(adReply.Title),
+		Body:         getStringValue(adReply.Body),
+		SourceURL:    getStringValue(adReply.SourceURL),
+		ThumbnailURL: getStringValue(adReply.ThumbnailURL),
+		Thumbnail:    getBytesAsBase64(adReply.Thumbnail),
+		SourceApp:    getStringValue(adReply.SourceType),
+		SourceType:   "ad",
+		MediaURL:     getStringValue(adReply.MediaURL),
+	}
+	
+	// Só retornar se pelo menos título ou body estiverem presentes
+	if adInfo.Title != "" || adInfo.Body != "" {
+		log.Debug().
+			Str("title", adInfo.Title).
+			Str("source_app", adInfo.SourceApp).
+			Str("source_url", adInfo.SourceURL).
+			Bool("has_thumbnail", adInfo.Thumbnail != "" || adInfo.ThumbnailURL != "").
+			Msg("🎯 Extracted ad info from message")
+		return adInfo
+	}
+	
+	return nil
+}
+
+// getStringValue extrai string de um ponteiro, retornando string vazia se nil
+func getStringValue(ptr *string) string {
+	if ptr == nil {
+		return ""
+	}
+	return *ptr
+}
+
+// getBytesAsBase64 converte []byte para base64 string, retornando string vazia se nil
+func getBytesAsBase64(data []byte) string {
+	if data == nil || len(data) == 0 {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(data)
+}
+
+// formatAdMessage formata uma mensagem de anúncio com contexto
+func formatAdMessage(userMessage string, adInfo *AdInfo) string {
+	if adInfo == nil {
+		return userMessage
+	}
+	
+	// Truncar o body para ~50 caracteres + "..."
+	shortBody := truncateText(adInfo.Body, 50)
+	
+	return fmt.Sprintf(`**ANÚNCIO: %s**
+
+%s
+
+Fonte: %s (%s)
+Link: %s
+
+---
+
+%s`,
+		adInfo.Title,
+		shortBody,
+		adInfo.SourceApp,
+		adInfo.SourceType,
+		adInfo.SourceURL,
+		userMessage,
+	)
+}
+
+// truncateText trunca texto para um tamanho máximo, adicionando "..."
+func truncateText(text string, maxLength int) string {
+	if len(text) <= maxLength {
+		return text
+	}
+	return text[:maxLength] + "..."
+}
+
+// processAdThumbnail processa thumbnail de anúncio sem redimensionamento
+func processAdThumbnail(adInfo *AdInfo) (*MediaData, error) {
+	var imageData []byte
+	var err error
+	
+	// Usar thumbnail base64 direto (sem redimensionar)
+	if adInfo.Thumbnail != "" {
+		imageData, err = base64.StdEncoding.DecodeString(adInfo.Thumbnail)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode base64 thumbnail: %w", err)
+		}
+		log.Debug().Int("size", len(imageData)).Msg("📸 Decoded ad thumbnail from base64")
+	} else if adInfo.ThumbnailURL != "" {
+		// Fallback para URL
+		resp, err := http.Get(adInfo.ThumbnailURL)
+		if err != nil {
+			return nil, fmt.Errorf("failed to download thumbnail: %w", err)
+		}
+		defer resp.Body.Close()
+		
+		imageData, err = io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read thumbnail data: %w", err)
+		}
+		log.Debug().Int("size", len(imageData)).Str("url", adInfo.ThumbnailURL).Msg("📸 Downloaded ad thumbnail from URL")
+	} else {
+		return nil, nil // Sem thumbnail
+	}
+	
+	return &MediaData{
+		Data:        imageData,
+		MessageType: MediaTypeImage,
+		FileName:    fmt.Sprintf("ad_thumbnail_%s.jpg", time.Now().Format("20060102_150405")),
+		MimeType:    "image/jpeg", 
+		FileSize:    int64(len(imageData)),
+		Caption:     "", // Será preenchida com o texto formatado
+	}, nil
+}
+
+// processAdMessage processa mensagem de anúncio completa (texto + thumbnail)
+func processAdMessage(client *Client, config *Config, evt *events.Message, userID string, conversationID int, messageType string, userMessage string, adInfo *AdInfo, replyInfo *ReplyInfo, db *sqlx.DB) error {
+	phone := evt.Info.Chat.User
+	
+	log.Info().
+		Str("title", adInfo.Title).
+		Str("source_app", adInfo.SourceApp).
+		Str("user_message", userMessage).
+		Msg("🎯 Processing ad message")
+	
+	// 1. Formatar caption com contexto do anúncio
+	formattedContent := formatAdMessage(userMessage, adInfo)
+	
+	// 2. Tentar processar thumbnail
+	thumbnail, err := processAdThumbnail(adInfo)
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to process ad thumbnail - falling back to text only")
+	}
+	
+	// 3. Enviar baseado na disponibilidade da imagem
+	if thumbnail != nil {
+		// Enviar como mídia com caption formatada
+		thumbnail.Caption = formattedContent
+		
+		chatwootMsg, err := client.SendMediaMessage(conversationID, thumbnail, messageType, evt.Info.ID)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to send ad media message - trying text fallback")
+			// Fallback: enviar só texto se mídia falhar
+			_, err := sendTextMessageWithReplyRetryAndSave(client, config, phone, conversationID, formattedContent, evt.Info.ID, messageType, replyInfo, db, userID, evt)
+			return err
+		}
+		
+		// Salvar mensagem de mídia no banco
+		if chatwootMsg != nil {
+			err = saveMediaMessageToDB(db, evt, userID, thumbnail, chatwootMsg.ID, conversationID)
+			if err != nil {
+				log.Warn().Err(err).Msg("Failed to save ad media message to database")
+			} else {
+				log.Info().
+					Int("chatwootID", chatwootMsg.ID).
+					Str("messageID", evt.Info.ID).
+					Msg("💾 Saved ad media message to database")
+			}
+		}
+		
+		log.Info().
+			Int("chatwootID", chatwootMsg.ID).
+			Int("conversationID", conversationID).
+			Str("fileName", thumbnail.FileName).
+			Msg("📸 Successfully sent ad message with thumbnail")
+		return nil
+	} else {
+		// 4. Fallback: enviar só texto formatado
+		log.Info().Msg("No thumbnail available - sending ad as text only")
+		chatwootMsg, err := sendTextMessageWithReplyRetryAndSave(client, config, phone, conversationID, formattedContent, evt.Info.ID, messageType, replyInfo, db, userID, evt)
+		if err != nil {
+			return err
+		}
+		
+		log.Info().
+			Int("chatwootID", chatwootMsg.ID).
+			Int("conversationID", conversationID).
+			Msg("📝 Successfully sent ad message as text")
+		return nil
+	}
+}
+
+// processGroupAdMessage processa mensagem de anúncio em grupo (texto + thumbnail + prefixo sender)
+func processGroupAdMessage(client *Client, config *Config, evt *events.Message, userID string, conversationID int, messageType string, originalContent, prefixedContent string, adInfo *AdInfo, replyInfo *ReplyInfo, db *sqlx.DB) error {
+	groupPhone := evt.Info.Chat.User
+	
+	// Extrair informações do remetente (já está no prefixedContent)
+	var senderInfo string
+	if !evt.Info.IsFromMe {
+		senderPhone := evt.Info.Sender.User
+		senderName := evt.Info.PushName
+		if senderName == "" {
+			senderName = "Desconhecido"
+		}
+		formattedPhone := formatPhoneNumber(senderPhone)
+		senderInfo = fmt.Sprintf("%s - %s", formattedPhone, senderName)
+	}
+	
+	log.Info().
+		Str("title", adInfo.Title).
+		Str("source_app", adInfo.SourceApp).
+		Str("sender_info", senderInfo).
+		Str("user_message", originalContent).
+		Msg("🎯 Processing group ad message")
+	
+	// 1. Formatar caption especial para grupos (com sender info)
+	var formattedContent string
+	if senderInfo != "" {
+		formattedContent = formatGroupAdMessage(senderInfo, originalContent, adInfo)
+	} else {
+		// Para mensagens próprias (IsFromMe), usar formato individual
+		formattedContent = formatAdMessage(originalContent, adInfo)
+	}
+	
+	// 2. Tentar processar thumbnail
+	thumbnail, err := processAdThumbnail(adInfo)
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to process group ad thumbnail - falling back to text only")
+	}
+	
+	// 3. Enviar baseado na disponibilidade da imagem
+	if thumbnail != nil {
+		// Enviar como mídia com caption formatada
+		thumbnail.Caption = formattedContent
+		
+		chatwootMsg, err := client.SendMediaMessage(conversationID, thumbnail, messageType, evt.Info.ID)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to send group ad media message - trying text fallback")
+			// Fallback: enviar só texto se mídia falhar
+			_, err := sendTextMessageWithReplyRetryAndSave(client, config, groupPhone, conversationID, formattedContent, evt.Info.ID, messageType, replyInfo, db, userID, evt)
+			return err
+		}
+		
+		// Salvar mensagem de mídia no banco
+		if chatwootMsg != nil {
+			err = saveMediaMessageToDB(db, evt, userID, thumbnail, chatwootMsg.ID, conversationID)
+			if err != nil {
+				log.Warn().Err(err).Msg("Failed to save group ad media message to database")
+			} else {
+				log.Info().
+					Int("chatwootID", chatwootMsg.ID).
+					Str("messageID", evt.Info.ID).
+					Msg("💾 Saved group ad media message to database")
+			}
+		}
+		
+		log.Info().
+			Int("chatwootID", chatwootMsg.ID).
+			Int("conversationID", conversationID).
+			Str("fileName", thumbnail.FileName).
+			Msg("📸 Successfully sent group ad message with thumbnail")
+		return nil
+	} else {
+		// 4. Fallback: enviar só texto formatado
+		log.Info().Msg("No thumbnail available - sending group ad as text only")
+		chatwootMsg, err := sendTextMessageWithReplyRetryAndSave(client, config, groupPhone, conversationID, formattedContent, evt.Info.ID, messageType, replyInfo, db, userID, evt)
+		if err != nil {
+			return err
+		}
+		
+		log.Info().
+			Int("chatwootID", chatwootMsg.ID).
+			Int("conversationID", conversationID).
+			Msg("📝 Successfully sent group ad message as text")
+		return nil
+	}
+}
+
+// formatGroupAdMessage formata mensagem de anúncio para grupos (com sender info)
+func formatGroupAdMessage(senderInfo, userMessage string, adInfo *AdInfo) string {
+	if adInfo == nil {
+		return fmt.Sprintf("**%s:**\n\n%s", senderInfo, userMessage)
+	}
+	
+	// Truncar o body para grupos (menor espaço)
+	shortBody := truncateText(adInfo.Body, 40)
+	
+	return fmt.Sprintf(`**ANÚNCIO: %s**
+
+%s
+
+Fonte: %s (%s)
+Link: %s
+
+---
+
+**%s:** %s`,
+		adInfo.Title,
+		shortBody,
+		adInfo.SourceApp,
+		adInfo.SourceType,
+		adInfo.SourceURL,
+		senderInfo,
+		userMessage,
+	)
 }
 
 // saveMessageToDB salva mensagem no banco com vínculo Chatwoot
