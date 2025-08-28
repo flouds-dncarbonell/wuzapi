@@ -172,6 +172,17 @@ func processMessageEvent(client *Client, config *Config, evt *events.Message, us
 		return processWhatsAppMessageDeletion(client, config, evt, userID, db)
 	}
 	
+	// 1.1. Verificar se é uma mensagem editada (Edit: "1")
+	if string(evt.Info.Edit) == "1" && evt.Message.GetProtocolMessage() != nil {
+		log.Info().
+			Str("message_id", evt.Info.ID).
+			Str("chat", evt.Info.Chat.String()).
+			Str("edit_type", string(evt.Info.Edit)).
+			Msg("✏️ Detectada edição WhatsApp → processando para Chatwoot")
+		
+		return processWhatsAppMessageEdit(client, config, evt, userID, db)
+	}
+	
 	// 2. Verificar se deve ignorar (grupos, etc)
 	if shouldIgnoreMessage(config, evt) {
 		return nil
@@ -1032,8 +1043,8 @@ func extractAdInfo(msg *waE2E.Message) *AdInfo {
 		SourceURL:    getStringValue(adReply.SourceURL),
 		ThumbnailURL: getStringValue(adReply.ThumbnailURL),
 		Thumbnail:    getBytesAsBase64(adReply.Thumbnail),
-		SourceApp:    getStringValue(adReply.SourceType),
-		SourceType:   "ad",
+		SourceApp:    getStringValue(adReply.SourceApp),
+		SourceType:   getStringValue(adReply.SourceType),
 		MediaURL:     getStringValue(adReply.MediaURL),
 	}
 	
@@ -1076,20 +1087,28 @@ func formatAdMessage(userMessage string, adInfo *AdInfo) string {
 	// Truncar o body para ~50 caracteres + "..."
 	shortBody := truncateText(adInfo.Body, 50)
 	
+	// Evitar duplicação se SourceApp == SourceType
+	var sourceInfo string
+	if adInfo.SourceApp != "" && adInfo.SourceApp != adInfo.SourceType {
+		sourceInfo = fmt.Sprintf("%s (%s)", adInfo.SourceApp, adInfo.SourceType)
+	} else if adInfo.SourceApp != "" {
+		sourceInfo = adInfo.SourceApp
+	} else {
+		sourceInfo = adInfo.SourceType
+	}
+	
 	return fmt.Sprintf(`**ANÚNCIO: %s**
-
 %s
 
-Fonte: %s (%s)
+Fonte: %s
 Link: %s
 
----
+-
 
 %s`,
 		adInfo.Title,
 		shortBody,
-		adInfo.SourceApp,
-		adInfo.SourceType,
+		sourceInfo,
 		adInfo.SourceURL,
 		userMessage,
 	)
@@ -2661,6 +2680,152 @@ func processWhatsAppMessageDeletion(client *Client, config *Config, evt *events.
 		Int("chatwoot_message_id", chatwootMsgID).
 		Str("chat", evt.Info.Chat.String()).
 		Msg("🎉 Successfully processed WhatsApp message deletion → Chatwoot")
+
+	return nil
+}
+
+// processWhatsAppMessageEdit processa edição de mensagem WhatsApp → Chatwoot
+func processWhatsAppMessageEdit(client *Client, config *Config, evt *events.Message, userID string, db *sqlx.DB) error {
+	// Extrair dados da mensagem editada do protocolMessage
+	protocolMsg := evt.Message.GetProtocolMessage()
+	if protocolMsg == nil || protocolMsg.Key == nil || protocolMsg.Key.ID == nil {
+		return fmt.Errorf("invalid protocol message for edit")
+	}
+	
+	originalMessageID := *protocolMsg.Key.ID
+	editedMessage := protocolMsg.GetEditedMessage()
+	if editedMessage == nil {
+		return fmt.Errorf("edited message content not found")
+	}
+	
+	// Extrair texto editado
+	var editedText string
+	if editedMessage.GetConversation() != "" {
+		editedText = editedMessage.GetConversation()
+	} else if editedMessage.GetExtendedTextMessage() != nil {
+		editedText = editedMessage.GetExtendedTextMessage().GetText()
+	} else {
+		return fmt.Errorf("no text content found in edited message")
+	}
+	
+	log.Info().
+		Str("original_message_id", originalMessageID).
+		Str("edit_event_id", evt.Info.ID).
+		Str("chat", evt.Info.Chat.String()).
+		Str("edited_text", editedText).
+		Bool("from_me", evt.Info.IsFromMe).
+		Msg("✏️ Processing WhatsApp message edit → Chatwoot")
+
+	// 1. Buscar mensagem original no banco local
+	originalMsg, err := FindMessageByStanzaID(db, originalMessageID, userID)
+	if err != nil {
+		log.Error().Err(err).
+			Str("original_message_id", originalMessageID).
+			Str("user_id", userID).
+			Msg("Failed to find original message in database")
+		return fmt.Errorf("failed to find original message: %w", err)
+	}
+
+	if originalMsg == nil {
+		log.Warn().
+			Str("original_message_id", originalMessageID).
+			Str("user_id", userID).
+			Msg("⚠️ Original message not found in database - may not have been processed by Chatwoot")
+		return nil // Não é erro crítico
+	}
+
+	if originalMsg.ChatwootMessageID == nil || originalMsg.ChatwootConversationID == nil {
+		log.Warn().
+			Str("original_message_id", originalMessageID).
+			Str("user_id", userID).
+			Bool("has_message_id", originalMsg.ChatwootMessageID != nil).
+			Bool("has_conversation_id", originalMsg.ChatwootConversationID != nil).
+			Msg("⚠️ Original message missing Chatwoot IDs - was not sent to Chatwoot")
+		return nil
+	}
+
+	chatwootConvID := *originalMsg.ChatwootConversationID
+	chatwootOriginalMsgID := *originalMsg.ChatwootMessageID
+	
+	log.Debug().
+		Str("original_message_id", originalMessageID).
+		Int("chatwoot_conversation_id", chatwootConvID).
+		Int("chatwoot_original_message_id", chatwootOriginalMsgID).
+		Msg("Found original message in Chatwoot")
+
+	// 2. Formatar texto editado com indicação de edição
+	finalText := fmt.Sprintf("%s\n\n_`Mensagem editada.`_", editedText)
+	
+	// 3. Criar nova mensagem no Chatwoot como reply da original
+	messageType := "incoming"
+	if evt.Info.IsFromMe {
+		messageType = "outgoing"
+	}
+	
+	// Criar ReplyInfo para fazer reply da mensagem original
+	replyInfo := &ReplyInfo{
+		InReplyToExternalID: originalMessageID,      // ID do WhatsApp da mensagem original
+		InReplyToChatwootID: chatwootOriginalMsgID, // ID do Chatwoot da mensagem original
+	}
+	
+	log.Info().
+		Str("original_message_id", originalMessageID).
+		Int("chatwoot_conversation_id", chatwootConvID).
+		Int("reply_to_message_id", chatwootOriginalMsgID).
+		Str("message_type", messageType).
+		Msg("Creating edit notification message in Chatwoot")
+
+	// 4. Enviar mensagem para Chatwoot com reply
+	newChatwootMessage, err := client.SendMessageWithReply(chatwootConvID, finalText, messageType, evt.Info.ID, replyInfo)
+	if err != nil {
+		log.Error().Err(err).
+			Str("original_message_id", originalMessageID).
+			Int("chatwoot_conversation_id", chatwootConvID).
+			Msg("Failed to create edit notification message in Chatwoot")
+		return fmt.Errorf("failed to create edit notification in Chatwoot: %w", err)
+	}
+	
+	var chatwootEditMessageID int
+	if newChatwootMessage != nil {
+		chatwootEditMessageID = newChatwootMessage.ID
+		
+		log.Info().
+			Str("original_message_id", originalMessageID).
+			Int("chatwoot_conversation_id", chatwootConvID).
+			Int("chatwoot_original_message_id", chatwootOriginalMsgID).
+			Int("chatwoot_edit_message_id", chatwootEditMessageID).
+			Str("chat", evt.Info.Chat.String()).
+			Msg("✅ Successfully created edit notification in Chatwoot")
+
+		// 5. Salvar a nova mensagem no banco local (opcional, para tracking)
+		editNotificationMsg := MessageRecord{
+			ID:                     string(evt.Info.ID),
+			UserID:                 userID,
+			Content:                finalText,
+			SenderName:             evt.Info.PushName,
+			MessageType:            "edit_notification",
+			ChatwootMessageID:      &chatwootEditMessageID,
+			ChatwootConversationID: &chatwootConvID,
+			FromMe:                 evt.Info.IsFromMe,
+			ChatJID:                evt.Info.Chat.String(),
+		}
+		
+		err = SaveMessage(db, editNotificationMsg)
+		if err != nil {
+			log.Warn().Err(err).
+				Str("edit_event_id", evt.Info.ID).
+				Msg("Failed to save edit notification message in local database")
+			// Não retorna erro porque a funcionalidade principal já funcionou
+		}
+	}
+
+	log.Info().
+		Str("original_message_id", originalMessageID).
+		Str("edit_event_id", evt.Info.ID).
+		Int("chatwoot_conversation_id", chatwootConvID).
+		Int("chatwoot_edit_message_id", chatwootEditMessageID).
+		Str("chat", evt.Info.Chat.String()).
+		Msg("🎉 Successfully processed WhatsApp message edit → Chatwoot")
 
 	return nil
 }

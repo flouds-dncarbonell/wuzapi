@@ -5,8 +5,8 @@
 **Arquitetura:** Package Go nativo (`chatwoot/`) integrado ao wuzapi para atendimento WhatsApp via Chatwoot.
 
 ## Releases
-- **GitHub:** [v1.1.1](https://github.com/flouds-dncarbonell/wuzapi/tree/v1.1.1)
-- **Docker:** `dncarbonell/wuzapi:v1.1.1` / `dncarbonell/wuzapi:latest`
+- **GitHub:** [v1.1.2](https://github.com/flouds-dncarbonell/wuzapi/tree/v1.1.2)
+- **Docker:** `dncarbonell/wuzapi:v1.1.2` / `dncarbonell/wuzapi:latest`
 
 ## Como Usar
 1. Acesse `http://localhost:8080/dashboard`
@@ -33,6 +33,7 @@ chatwoot/
 - ✅ **Mídias:** Imagens, vídeos, áudios, documentos, stickers
 - ✅ **Quotes:** Sistema bidirecional com database
 - ✅ **Message Deletion:** Sincronização automática
+- ✅ **Message Editing:** Suporte a edições de mensagens
 - ✅ **Bot Commands:** `/init`, `/status`, `/clearcache`, `/disconnect`
 - ✅ **Validação WhatsApp:** Números inválidos detectados
 - ✅ **Anti-Loop + Cache:** Performance e confiabilidade
@@ -52,11 +53,11 @@ curl -X GET http://localhost:8080/chatwoot/status -H "token: TOKEN"
 ## Docker
 ```bash
 # Usar versão oficial
-docker pull dncarbonell/wuzapi:v1.1.1
+docker pull dncarbonell/wuzapi:v1.1.2
 
 # Executar
-docker run -d -p 8080:8080 -e DB_TYPE=sqlite -v $(pwd)/data:/app/data dncarbonell/wuzapi:v1.1.1
+docker run -d -p 8080:8080 -e DB_TYPE=sqlite -v $(pwd)/data:/app/data dncarbonell/wuzapi:v1.1.2
 ```
 
 ---
-*Versão v1.1.1 - Release estável com todas as funcionalidades ativas*
+*Versão v1.1.2 - Adicionado suporte a edição de mensagens e melhorias em anúncios*
