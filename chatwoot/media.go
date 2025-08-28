@@ -5,12 +5,28 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/rs/zerolog/log"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types/events"
 )
+
+// sanitizeMimeType remove informações de codec do MIME type (ex: "audio/ogg; codecs=opus" -> "audio/ogg")
+func sanitizeMimeType(mimeType string) string {
+	if mimeType == "" {
+		return mimeType
+	}
+	
+	// Separar pelo ponto e vírgula e pegar apenas a primeira parte
+	parts := strings.Split(mimeType, ";")
+	if len(parts) > 0 {
+		return strings.TrimSpace(parts[0])
+	}
+	
+	return mimeType
+}
 
 // downloadWhatsAppMedia faz download de mídia do WhatsApp
 func downloadWhatsAppMedia(client *whatsmeow.Client, evt *events.Message) (*MediaData, error) {
@@ -60,7 +76,7 @@ func downloadImageMessage(client *whatsmeow.Client, msg *waE2E.ImageMessage) (*M
 
 	mimeType := "image/jpeg" // default
 	if msg.Mimetype != nil {
-		mimeType = *msg.Mimetype
+		mimeType = sanitizeMimeType(*msg.Mimetype)
 	}
 
 	var caption string
@@ -91,7 +107,7 @@ func downloadVideoMessage(client *whatsmeow.Client, msg *waE2E.VideoMessage) (*M
 
 	mimeType := "video/mp4" // default
 	if msg.Mimetype != nil {
-		mimeType = *msg.Mimetype
+		mimeType = sanitizeMimeType(*msg.Mimetype)
 	}
 
 	var caption string
@@ -122,7 +138,7 @@ func downloadAudioMessage(client *whatsmeow.Client, msg *waE2E.AudioMessage) (*M
 
 	mimeType := "audio/mpeg" // default
 	if msg.Mimetype != nil {
-		mimeType = *msg.Mimetype
+		mimeType = sanitizeMimeType(*msg.Mimetype)
 	}
 
 	var fileName string
@@ -147,7 +163,7 @@ func downloadDocumentMessage(client *whatsmeow.Client, msg *waE2E.DocumentMessag
 
 	mimeType := "application/octet-stream" // default
 	if msg.Mimetype != nil {
-		mimeType = *msg.Mimetype
+		mimeType = sanitizeMimeType(*msg.Mimetype)
 	}
 
 	var caption string
@@ -225,7 +241,7 @@ func downloadStickerMessage(client *whatsmeow.Client, msg *waE2E.StickerMessage)
 
 	mimeType := "image/webp" // default para stickers
 	if msg.Mimetype != nil {
-		mimeType = *msg.Mimetype
+		mimeType = sanitizeMimeType(*msg.Mimetype)
 	}
 
 	var fileName string
