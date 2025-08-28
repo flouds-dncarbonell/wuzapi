@@ -235,6 +235,19 @@ func parseJID(arg string) (types.JID, bool) {
 	}
 }
 
+// StartClient implementa a interface chatwoot.ClientStarter
+func (s *server) StartClient(userID, jid, token string, subscribedEvents []string) error {
+	// Criar killchannel se não existir
+	if killchannel[userID] == nil {
+		killchannel[userID] = make(chan bool)
+	}
+	
+	// Chamar startClient existente em goroutine
+	go s.startClient(userID, jid, token, subscribedEvents)
+	
+	return nil
+}
+
 func (s *server) startClient(userID string, textjid string, token string, subscriptions []string) {
 	log.Info().Str("userid", userID).Str("jid", textjid).Msg("Starting websocket connection to Whatsapp")
 
@@ -419,9 +432,15 @@ func (s *server) startClient(userID string, textjid string, token string, subscr
 			clientManager.DeleteMyClient(userID)
 			clientManager.DeleteHTTPClient(userID)
 			sqlStmt := `UPDATE users SET qrcode='', connected=0 WHERE id=$1`
-			_, err := s.db.Exec(sqlStmt, "", userID)
+			_, err := s.db.Exec(sqlStmt, userID)
 			if err != nil {
 				log.Error().Err(err).Msg(sqlStmt)
+			}
+			
+			// Iniciar monitor de reconexão após desconexão (qualquer motivo)
+			if chatwoot.GlobalReconnectionManager != nil {
+				go chatwoot.GlobalReconnectionManager.StartMonitoring(userID)
+				go chatwoot.GlobalReconnectionManager.NotifyDisconnection(userID)
 			}
 			return
 		default:
@@ -968,12 +987,6 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 		postmap["type"] = "Disconnected"
 		dowebhook = 1
 		log.Info().Str("reason", fmt.Sprintf("%+v", evt)).Msg("Disconnected from Whatsapp")
-		
-		// NOVO: Iniciar monitor de reconexão e notificar Chatwoot
-		if chatwoot.GlobalReconnectionManager != nil {
-			go chatwoot.GlobalReconnectionManager.StartMonitoring(mycli.userID)
-			go chatwoot.GlobalReconnectionManager.NotifyDisconnection(mycli.userID)
-		}
 	case *events.ConnectFailure:
 		postmap["type"] = "ConnectFailure"
 		dowebhook = 1

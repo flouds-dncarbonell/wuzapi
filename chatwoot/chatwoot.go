@@ -20,6 +20,14 @@ type ClientGetter interface {
 	GetWhatsmeowClient(userID string) *whatsmeow.Client
 }
 
+// ClientStarter interface para iniciar clientes WhatsApp
+type ClientStarter interface {
+	StartClient(userID, jid, token string, subscribedEvents []string) error
+}
+
+// GlobalClientStarter instância global para iniciar clientes
+var GlobalClientStarter ClientStarter
+
 // InitCache inicializa o cache global
 func InitCache() {
 	GlobalCache = NewCache()
@@ -28,6 +36,11 @@ func InitCache() {
 // SetClientGetter define o getter global para clientes
 func SetClientGetter(getter ClientGetter) {
 	GlobalClientGetter = getter
+}
+
+// SetClientStarter define o starter global para clientes
+func SetClientStarter(starter ClientStarter) {
+	GlobalClientStarter = starter
 }
 
 // HandlerWrapper é um helper para criar handlers compatíveis com o servidor principal

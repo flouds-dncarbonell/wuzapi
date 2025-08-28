@@ -97,6 +97,79 @@ type WebhookProcessor struct {
 	db *sqlx.DB
 }
 
+// getWhatsAppClientWithReconnection obtém cliente WhatsApp e detecta desconexão
+func (w *WebhookProcessor) getWhatsAppClientWithReconnection(userID string) (*whatsmeow.Client, error) {
+	if GlobalClientGetter == nil {
+		return nil, fmt.Errorf("GlobalClientGetter não configurado")
+	}
+	
+	client := GlobalClientGetter.GetWhatsmeowClient(userID)
+	if client == nil {
+		// Detectar desconexão via webhook error
+		if GlobalReconnectionManager != nil {
+			go GlobalReconnectionManager.EnsureMonitoring(userID)
+		}
+		return nil, fmt.Errorf("cliente WhatsApp não encontrado para usuário %s", userID)
+	}
+	
+	return client, nil
+}
+
+// isSelfConversation verifica se o chatID é uma conversa com o próprio número do bot
+func (w *WebhookProcessor) isSelfConversation(chatID, userID string) bool {
+	if chatID == "" || userID == "" {
+		return false
+	}
+	
+	// Obter número do bot via banco de dados
+	var jid string
+	err := w.db.Get(&jid, "SELECT jid FROM users WHERE id = $1", userID)
+	if err != nil {
+		log.Debug().Err(err).Str("userID", userID).Msg("Failed to get bot JID for self-conversation check")
+		return false
+	}
+	
+	if jid == "" {
+		return false
+	}
+	
+	// Extrair número do JID (formato: 555197173288:23@s.whatsapp.net)
+	var botPhone string
+	if strings.Contains(jid, "@") {
+		phoneNumber := strings.Split(jid, "@")[0]
+		// Remover sufixo :23 se existir
+		if strings.Contains(phoneNumber, ":") {
+			phoneNumber = strings.Split(phoneNumber, ":")[0]
+		}
+		botPhone = phoneNumber
+	}
+	
+	if botPhone == "" {
+		return false
+	}
+	
+	// Verificar se chatID corresponde ao próprio número
+	// chatID pode ser: "555197173288@s.whatsapp.net" ou apenas "555197173288"
+	chatPhone := chatID
+	if strings.Contains(chatID, "@") {
+		chatPhone = strings.Split(chatID, "@")[0]
+		if strings.Contains(chatPhone, ":") {
+			chatPhone = strings.Split(chatPhone, ":")[0]
+		}
+	}
+	
+	isSelf := chatPhone == botPhone
+	
+	log.Debug().
+		Str("chatID", chatID).
+		Str("botPhone", botPhone).
+		Str("chatPhone", chatPhone).
+		Bool("isSelf", isSelf).
+		Msg("Self-conversation check")
+	
+	return isSelf
+}
+
 // NewWebhookProcessor cria uma nova instância do processador de webhook
 func NewWebhookProcessor(db *sqlx.DB) *WebhookProcessor {
 	return &WebhookProcessor{
@@ -120,6 +193,14 @@ func (w *WebhookProcessor) ProcessWebhook(c WebhookContext) {
 		return
 	}
 
+	// Buscar configuração do Chatwoot para este token
+	config, err := GetConfigByToken(w.db, token)
+	if err != nil {
+		log.Error().Err(err).Msg("Erro ao buscar configuração do Chatwoot")
+		c.JSON(http.StatusInternalServerError, map[string]string{"error": "Configuração não encontrada"})
+		return
+	}
+
 	log.Info().
 		Str("token", token).
 		Str("event", payload.Event).
@@ -128,17 +209,9 @@ func (w *WebhookProcessor) ProcessWebhook(c WebhookContext) {
 		Msg("Webhook recebido do Chatwoot")
 
 	// Verificar se a mensagem deve ser processada
-	if !w.shouldProcessMessage(payload) {
+	if !w.shouldProcessMessage(payload, config) {
 		log.Debug().Msg("Mensagem ignorada pelos filtros")
 		c.JSON(http.StatusOK, map[string]string{"message": "mensagem ignorada"})
-		return
-	}
-
-	// Buscar configuração do Chatwoot para este token
-	config, err := GetConfigByToken(w.db, token)
-	if err != nil {
-		log.Error().Err(err).Msg("Erro ao buscar configuração do Chatwoot")
-		c.JSON(http.StatusInternalServerError, map[string]string{"error": "Configuração não encontrada"})
 		return
 	}
 
@@ -234,8 +307,8 @@ func (w *WebhookProcessor) processWithValidJID(payload WebhookPayload, config *C
 		return w.processMessageDeletion(payload, config, chatID)
 	}
 
-	// Processar comandos especiais para bot de contato
-	if chatID == "123456" && payload.MessageType == "outgoing" {
+	// Processar comandos especiais na self-conversation (próprio número)
+	if w.isSelfConversation(chatID, config.UserID) && payload.MessageType == "outgoing" {
 		return w.processBotCommands(payload, config)
 	}
 
@@ -487,6 +560,10 @@ func (w *WebhookProcessor) deleteMessageFromWhatsApp(messageID, phoneNumber, use
 	// Obter cliente WhatsApp (mesmo padrão usado para enviar mensagens)
 	client := GlobalClientGetter.GetWhatsmeowClient(userID)
 	if client == nil {
+		// Detectar desconexão via webhook error
+		if GlobalReconnectionManager != nil {
+			go GlobalReconnectionManager.EnsureMonitoring(userID)
+		}
 		return fmt.Errorf("cliente WhatsApp não encontrado para usuário %s", userID)
 	}
 
@@ -542,12 +619,22 @@ func (w *WebhookProcessor) deleteMessageFromDatabase(messageID, userID string) e
 
 // processBotCommands processa comandos especiais do bot
 func (w *WebhookProcessor) processBotCommands(payload WebhookPayload, config *Config) error {
-	command := strings.TrimPrefix(payload.Content, "/")
+	// Processar apenas comandos que começam com #
+	if !strings.HasPrefix(payload.Content, "#") {
+		log.Debug().Str("content", payload.Content).Msg("Not a valid command - must start with #")
+		return nil
+	}
+	
+	// Remover prefixo # do comando
+	command := strings.TrimPrefix(payload.Content, "#")
 	command = strings.ToLower(command)
 
 	log.Info().Str("command", command).Msg("Processando comando do bot")
 
 	switch {
+	case command == "help" || command == "ajuda":
+		return w.handleHelpCommand(payload, config)
+		
 	case command == "qrcode" || command == "qr":
 		return w.handleQRCodeCommand(payload, config)
 		
@@ -555,19 +642,17 @@ func (w *WebhookProcessor) processBotCommands(payload WebhookPayload, config *Co
 		return w.handleStatusCommand(payload, config)
 		
 	case strings.Contains(command, "init") || strings.Contains(command, "iniciar"):
-		// TODO: Implementar comando de inicialização
-		log.Info().Msg("Comando de inicialização recebido")
+		return w.handleInitCommand(payload, config)
 		
-	case command == "clearcache":
-		// TODO: Implementar limpeza de cache
-		log.Info().Msg("Comando de limpeza de cache recebido")
+	case command == "clearcache" || command == "limpar":
+		return w.handleClearCacheCommand(payload, config)
 		
 	case command == "disconnect" || command == "desconectar":
-		// TODO: Implementar desconexão
-		log.Info().Msg("Comando de desconexão recebido")
+		return w.handleDisconnectCommand(payload, config)
 		
 	default:
-		log.Debug().Str("command", command).Msg("Comando não reconhecido")
+		// Comando não reconhecido - enviar sugestão
+		return w.handleUnknownCommand(payload, config, command)
 	}
 
 	return nil
@@ -781,9 +866,9 @@ func (w *WebhookProcessor) getMediaType(mimeType, fileType string) string {
 
 // sendImage envia uma imagem para o WhatsApp
 func (w *WebhookProcessor) sendImage(data []byte, mimeType, caption string, config *Config, chatID, fileName string) error {
-	client := GlobalClientGetter.GetWhatsmeowClient(config.UserID)
-	if client == nil {
-		return fmt.Errorf("cliente WhatsApp não encontrado")
+	client, err := w.getWhatsAppClientWithReconnection(config.UserID)
+	if err != nil {
+		return err
 	}
 
 	jid, err := w.parseJID(chatID)
@@ -840,9 +925,9 @@ func (w *WebhookProcessor) sendImage(data []byte, mimeType, caption string, conf
 
 // sendVideo envia um vídeo para o WhatsApp
 func (w *WebhookProcessor) sendVideo(data []byte, mimeType, caption string, config *Config, chatID, fileName string) error {
-	client := GlobalClientGetter.GetWhatsmeowClient(config.UserID)
-	if client == nil {
-		return fmt.Errorf("cliente WhatsApp não encontrado")
+	client, err := w.getWhatsAppClientWithReconnection(config.UserID)
+	if err != nil {
+		return err
 	}
 
 	jid, err := w.parseJID(chatID)
@@ -899,9 +984,9 @@ func (w *WebhookProcessor) sendVideo(data []byte, mimeType, caption string, conf
 
 // sendAudio envia um áudio para o WhatsApp
 func (w *WebhookProcessor) sendAudio(data []byte, mimeType string, config *Config, chatID, fileName string) error {
-	client := GlobalClientGetter.GetWhatsmeowClient(config.UserID)
-	if client == nil {
-		return fmt.Errorf("cliente WhatsApp não encontrado")
+	client, err := w.getWhatsAppClientWithReconnection(config.UserID)
+	if err != nil {
+		return err
 	}
 
 	jid, err := w.parseJID(chatID)
@@ -1184,6 +1269,10 @@ func (w *WebhookProcessor) sendTextMessageWithQuote(content string, config *Conf
 
 	client := GlobalClientGetter.GetWhatsmeowClient(config.UserID)
 	if client == nil {
+		// Detectar desconexão via webhook error
+		if GlobalReconnectionManager != nil {
+			go GlobalReconnectionManager.EnsureMonitoring(config.UserID)
+		}
 		return fmt.Errorf("cliente WhatsApp não encontrado para usuário %s", config.UserID)
 	}
 
@@ -1775,7 +1864,7 @@ func (w *WebhookProcessor) extractChatID(payload WebhookPayload) string {
 }
 
 // shouldProcessMessage verifica se a mensagem deve ser processada
-func (w *WebhookProcessor) shouldProcessMessage(payload WebhookPayload) bool {
+func (w *WebhookProcessor) shouldProcessMessage(payload WebhookPayload, config *Config) bool {
 	// Não processar mensagens privadas
 	if payload.Private {
 		return false
@@ -1817,9 +1906,9 @@ func (w *WebhookProcessor) shouldProcessMessage(payload WebhookPayload) bool {
 		return false
 	}
 	
-	// Comandos do bot (123456) são permitidos mesmo em outros eventos
+	// Comandos do bot (self-conversation) são permitidos mesmo em outros eventos
 	chatID := w.extractChatID(payload)
-	if chatID == "123456" {
+	if w.isSelfConversation(chatID, config.UserID) {
 		// Para comandos do bot, permitir mais eventos
 		botAllowedEvents := map[string]bool{
 			"message_created": true,
@@ -1850,9 +1939,9 @@ func (w *WebhookProcessor) processTypingEvent(payload WebhookPayload, config *Co
 		return fmt.Errorf("não foi possível extrair ID do chat para typing event")
 	}
 	
-	// Ignorar typing events para o bot de contato (123456)
-	if chatID == "123456" {
-		log.Debug().Msg("Ignorando typing event para bot de contato")
+	// Ignorar typing events para self-conversation
+	if w.isSelfConversation(chatID, config.UserID) {
+		log.Debug().Msg("Ignorando typing event para self-conversation")
 		return nil
 	}
 	
@@ -1899,6 +1988,10 @@ func (w *WebhookProcessor) setWhatsAppPresence(userID, chatID, presence string) 
 	// Obter cliente do WhatsApp
 	client := GlobalClientGetter.GetWhatsmeowClient(userID)
 	if client == nil {
+		// Detectar desconexão via webhook error
+		if GlobalReconnectionManager != nil {
+			go GlobalReconnectionManager.EnsureMonitoring(userID)
+		}
 		return fmt.Errorf("cliente WhatsApp não encontrado para user_id: %s", userID)
 	}
 	
@@ -1967,29 +2060,82 @@ func (w *WebhookProcessor) saveOutgoingMessage(messageID, content, userID, chatI
 	return nil
 }
 
-// handleQRCodeCommand processa comando /qrcode
+// handleHelpCommand processa comando #help
+func (w *WebhookProcessor) handleHelpCommand(payload WebhookPayload, config *Config) error {
+	helpMessage := "🤖 **Comandos Disponíveis** 🤖\n\n" +
+		"**Reconexão:**\n" +
+		"• `#qrcode` ou `#qr` - Gerar QR code para reconectar\n" +
+		"• `#status` - Verificar status da conexão\n\n" +
+		"**Gerenciamento:**\n" +
+		"• `#clearcache` ou `#limpar` - Limpar cache do sistema\n" +
+		"• `#disconnect` ou `#desconectar` - Desconectar WhatsApp\n" +
+		"• `#init` ou `#iniciar` - Inicializar conexão\n\n" +
+		"**Ajuda:**\n" +
+		"• `#help` ou `#ajuda` - Mostrar esta lista de comandos\n\n" +
+		"💡 **Dica:** Todos os comandos devem começar com `#` (não `/`)\n\n" +
+		"_Sistema de comandos ativo_"
+	
+	return w.sendPrivateMessage(payload.Conversation.ID, helpMessage, config)
+}
+
+// handleUnknownCommand trata comandos não reconhecidos
+func (w *WebhookProcessor) handleUnknownCommand(payload WebhookPayload, config *Config, command string) error {
+	unknownMessage := fmt.Sprintf(
+		"❓ **Comando não reconhecido:** `#%s`\n\n" +
+		"Digite `#help` para ver todos os comandos disponíveis.\n\n" +
+		"**Comandos principais:**\n" +
+		"• `#qrcode` - Gerar QR para reconectar\n" +
+		"• `#status` - Status da conexão\n" +
+		"• `#help` - Lista completa de comandos",
+		command,
+	)
+	
+	return w.sendPrivateMessage(payload.Conversation.ID, unknownMessage, config)
+}
+
+// handleInitCommand processa comando #init
+func (w *WebhookProcessor) handleInitCommand(payload WebhookPayload, config *Config) error {
+	// TODO: Implementar lógica de inicialização
+	message := "🚀 **Comando de Inicialização**\n\n" +
+		"Funcionalidade em desenvolvimento.\n\n" +
+		"Use `#qrcode` para reconectar ou `#status` para verificar a conexão."
+	
+	return w.sendPrivateMessage(payload.Conversation.ID, message, config)
+}
+
+// handleClearCacheCommand processa comando #clearcache
+func (w *WebhookProcessor) handleClearCacheCommand(payload WebhookPayload, config *Config) error {
+	// TODO: Implementar limpeza de cache
+	message := "🧹 **Limpeza de Cache**\n\n" +
+		"Funcionalidade em desenvolvimento.\n\n" +
+		"Cache será limpo automaticamente quando necessário."
+	
+	return w.sendPrivateMessage(payload.Conversation.ID, message, config)
+}
+
+// handleDisconnectCommand processa comando #disconnect
+func (w *WebhookProcessor) handleDisconnectCommand(payload WebhookPayload, config *Config) error {
+	// TODO: Implementar desconexão forçada
+	message := "🔌 **Desconexão do WhatsApp**\n\n" +
+		"Funcionalidade em desenvolvimento.\n\n" +
+		"Para verificar o status atual, use `#status`."
+	
+	return w.sendPrivateMessage(payload.Conversation.ID, message, config)
+}
+
+// handleQRCodeCommand processa comando #qrcode usando sistema existente
 func (w *WebhookProcessor) handleQRCodeCommand(payload WebhookPayload, config *Config) error {
-	log.Info().Str("userID", config.UserID).Int("conversationID", payload.Conversation.ID).Msg("🔥 QR Code generation requested")
+	log.Info().Str("userID", config.UserID).Int("conversationID", payload.Conversation.ID).Msg("🔥 QR Code generation requested via existing system")
 	
-	// Verificar se WhatsApp já está conectado
-	if GlobalClientGetter != nil {
-		client := GlobalClientGetter.GetWhatsmeowClient(config.UserID)
-		if client != nil && client.IsConnected() {
-			return w.sendPrivateMessage(payload.Conversation.ID, 
-				"✅ **WhatsApp já está conectado!**\n\nNão é necessário gerar QR code.", config)
-		}
+	// Usar o sistema existente de QR code com tentativas
+	if GlobalReconnectionManager != nil {
+		return GlobalReconnectionManager.HandleQRCodeRequest(config.UserID, payload.Conversation.ID, config)
 	}
 	
-	// Buscar QR code atual do banco
-	var qrCode string
-	err := w.db.Get(&qrCode, "SELECT qrcode FROM users WHERE id=$1", config.UserID)
-	if err != nil || qrCode == "" {
-		return w.sendPrivateMessage(payload.Conversation.ID, 
-			"❌ **QR Code não disponível**\n\nO sistema WhatsApp pode precisar ser reiniciado.", config)
-	}
-	
-	// Enviar QR code como imagem
-	return w.sendQRCodeMessage(payload.Conversation.ID, qrCode, config)
+	// Fallback caso GlobalReconnectionManager não esteja inicializado
+	log.Warn().Str("userID", config.UserID).Msg("ReconnectionManager not initialized - using fallback")
+	return w.sendPrivateMessage(payload.Conversation.ID, 
+		"❌ **Erro ao conectar, por favor, contate o suporte para mais instruções.**", config)
 }
 
 // handleStatusCommand processa comando /status

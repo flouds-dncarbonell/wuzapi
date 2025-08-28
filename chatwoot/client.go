@@ -1136,8 +1136,14 @@ func (c *Client) SetConversationPriority(conversationID int, priority string) er
 		return fmt.Errorf("invalid priority '%s'. Valid options: urgent, high, medium, low, none", priority)
 	}
 	
+	// Converter "none" para string vazia (formato correto da API Chatwoot)
+	priorityValue := priority
+	if priority == "none" {
+		priorityValue = ""
+	}
+	
 	payload := map[string]interface{}{
-		"priority": priority,
+		"priority": priorityValue,
 	}
 
 	log.Debug().

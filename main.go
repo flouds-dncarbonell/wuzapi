@@ -221,6 +221,7 @@ func main() {
 	// Inicializar cache e wrapper Chatwoot
 	chatwoot.InitCache()
 	chatwoot.SetClientGetter(clientManager)
+	chatwoot.SetClientStarter(s) // server implementa ClientStarter
 	chatwoot.InitReconnectionManager(db)
 	chatwootWrapper = chatwoot.NewHandlerWrapper(db, s.Respond)
 	

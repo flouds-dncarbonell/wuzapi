@@ -774,10 +774,14 @@ func findOrCreateConversation(client *Client, contactID int, config *Config, pho
 	}
 
 	// 2. Buscar conversas existentes do contato (como chatwoot-lib)
+	var hasConversationsInOtherInboxes bool
+	var otherInboxIDs []int
+	
 	conversations, err := client.ListContactConversations(contactID)
 	if err != nil {
 		log.Error().Err(err).Int("contactID", contactID).Msg("Error listing contact conversations")
 	} else {
+		
 		// Buscar conversa no inbox específico
 		for _, conv := range conversations {
 			if conv.InboxID == inboxID {
@@ -815,7 +819,20 @@ func findOrCreateConversation(client *Client, contactID int, config *Config, pho
 						return &conv, nil
 					}
 				}
+			} else {
+				// Contato existe em outros inboxes
+				hasConversationsInOtherInboxes = true
+				otherInboxIDs = append(otherInboxIDs, conv.InboxID)
 			}
+		}
+		
+		// Log informativo se contato existir em outros inboxes mas não no configurado
+		if hasConversationsInOtherInboxes {
+			log.Info().
+				Int("contactID", contactID).
+				Int("configured_inbox", inboxID).
+				Ints("other_inboxes", otherInboxIDs).
+				Msg("📧 Contact exists in other inboxes but not in configured one - will create cross-inbox conversation")
 		}
 	}
 
@@ -826,10 +843,21 @@ func findOrCreateConversation(client *Client, contactID int, config *Config, pho
 	}
 
 	GlobalCache.SetConversation(contactID, inboxID, conversation)
-	log.Info().
-		Int("contactID", contactID).
-		Int("conversationID", conversation.ID).
-		Msg("Created new conversation in Chatwoot")
+	
+	// Log diferenciado para criação cross-inbox
+	if len(otherInboxIDs) > 0 {
+		log.Info().
+			Int("contactID", contactID).
+			Int("conversationID", conversation.ID).
+			Int("target_inbox", inboxID).
+			Ints("existing_inboxes", otherInboxIDs).
+			Msg("✅ Created cross-inbox conversation - contact now accessible in configured inbox")
+	} else {
+		log.Info().
+			Int("contactID", contactID).
+			Int("conversationID", conversation.ID).
+			Msg("✅ Created new conversation in Chatwoot")
+	}
 
 	return conversation, nil
 }
