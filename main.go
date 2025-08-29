@@ -222,6 +222,7 @@ func main() {
 	chatwoot.InitCache()
 	chatwoot.SetClientGetter(clientManager)
 	chatwoot.SetClientStarter(s) // server implementa ClientStarter
+	chatwoot.SetClientDisconnector(s) // server implementa ClientDisconnector
 	chatwoot.InitReconnectionManager(db)
 	chatwootWrapper = chatwoot.NewHandlerWrapper(db, s.Respond)
 	

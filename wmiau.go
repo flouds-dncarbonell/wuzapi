@@ -248,6 +248,12 @@ func (s *server) StartClient(userID, jid, token string, subscribedEvents []strin
 	return nil
 }
 
+// DisconnectClient implementa interface ClientDisconnector - reutiliza função existente
+func (s *server) DisconnectClient(userID string) error {
+	// Reutilizar a função disconnectUser existente
+	return s.disconnectUser(userID)
+}
+
 func (s *server) startClient(userID string, textjid string, token string, subscriptions []string) {
 	log.Info().Str("userid", userID).Str("jid", textjid).Msg("Starting websocket connection to Whatsapp")
 
@@ -548,8 +554,10 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 		postmap["type"] = "Message"
 		dowebhook = 1
 		
-		// NOVO: Processar para Chatwoot
-		go chatwoot.ProcessEvent(mycli.userID, mycli.db, rawEvt, postmap)
+		// NOVO: Processar para Chatwoot (apenas se habilitado)
+		if chatwoot.IsUserChatwootEnabled(mycli.db, mycli.userID) {
+			go chatwoot.ProcessEvent(mycli.userID, mycli.db, rawEvt, postmap)
+		}
 		metaParts := []string{fmt.Sprintf("pushname: %s", evt.Info.PushName), fmt.Sprintf("timestamp: %s", evt.Info.Timestamp)}
 		if evt.Info.Type != "" {
 			metaParts = append(metaParts, fmt.Sprintf("type: %s", evt.Info.Type))
@@ -917,8 +925,10 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 		postmap["type"] = "ReadReceipt"
 		dowebhook = 1
 		
-		// NOVO: Processar para Chatwoot
-		go chatwoot.ProcessEvent(mycli.userID, mycli.db, rawEvt, postmap)
+		// NOVO: Processar para Chatwoot (apenas se habilitado)
+		if chatwoot.IsUserChatwootEnabled(mycli.db, mycli.userID) {
+			go chatwoot.ProcessEvent(mycli.userID, mycli.db, rawEvt, postmap)
+		}
 		//if evt.Type == events.ReceiptTypeRead || evt.Type == events.ReceiptTypeReadSelf {
 		if evt.Type == types.ReceiptTypeRead || evt.Type == types.ReceiptTypeReadSelf {
 			log.Info().Strs("id", evt.MessageIDs).Str("source", evt.SourceString()).Str("timestamp", fmt.Sprintf("%v", evt.Timestamp)).Msg("Message was read")
@@ -940,8 +950,10 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 		postmap["type"] = "Presence"
 		dowebhook = 1
 		
-		// NOVO: Processar para Chatwoot
-		go chatwoot.ProcessEvent(mycli.userID, mycli.db, rawEvt, postmap)
+		// NOVO: Processar para Chatwoot (apenas se habilitado)
+		if chatwoot.IsUserChatwootEnabled(mycli.db, mycli.userID) {
+			go chatwoot.ProcessEvent(mycli.userID, mycli.db, rawEvt, postmap)
+		}
 		if evt.Unavailable {
 			postmap["state"] = "offline"
 			if evt.LastSeen.IsZero() {

@@ -5,8 +5,8 @@
 **Arquitetura:** Package Go nativo (`chatwoot/`) integrado ao wuzapi para atendimento WhatsApp via Chatwoot.
 
 ## Releases
-- **GitHub:** [v1.1.2](https://github.com/flouds-dncarbonell/wuzapi/tree/v1.1.2)
-- **Docker:** `dncarbonell/wuzapi:v1.1.2` / `dncarbonell/wuzapi:latest`
+- **GitHub:** [v1.1.3](https://github.com/flouds-dncarbonell/wuzapi/tree/v1.1.3)
+- **Docker:** `dncarbonell/wuzapi:v1.1.3` / `dncarbonell/wuzapi:latest`
 
 ## Como Usar
 1. Acesse `http://localhost:8080/dashboard`
@@ -53,11 +53,11 @@ curl -X GET http://localhost:8080/chatwoot/status -H "token: TOKEN"
 ## Docker
 ```bash
 # Usar versão oficial
-docker pull dncarbonell/wuzapi:v1.1.2
+docker pull dncarbonell/wuzapi:v1.1.3
 
 # Executar
-docker run -d -p 8080:8080 -e DB_TYPE=sqlite -v $(pwd)/data:/app/data dncarbonell/wuzapi:v1.1.2
+docker run -d -p 8080:8080 -e DB_TYPE=sqlite -v $(pwd)/data:/app/data dncarbonell/wuzapi:v1.1.3
 ```
 
 ---
-*Versão v1.1.2 - Adicionado suporte a edição de mensagens e melhorias em anúncios*
+*Versão v1.1.3 - Atualizações e melhorias gerais*

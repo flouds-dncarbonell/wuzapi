@@ -180,46 +180,47 @@ func (s *server) Connect() http.HandlerFunc {
 	}
 }
 
+// disconnectUser executa a lógica core de desconexão - reutilizável
+func (s *server) disconnectUser(userID string) error {
+	if clientManager.GetWhatsmeowClient(userID) == nil {
+		return errors.New("no session")
+	}
+	if !clientManager.GetWhatsmeowClient(userID).IsConnected() {
+		return errors.New("cannot disconnect because it is not logged in")
+	}
+
+	// Core da lógica de desconexão
+	log.Info().Str("userID", userID).Msg("Disconnection successful")
+	_, err := s.db.Exec("UPDATE users SET connected=0 WHERE id=$1", userID)
+	if err != nil {
+		log.Warn().Str("userID", userID).Msg("Could not update connection status in users table")
+	}
+	log.Info().Str("userID", userID).Msg("Update DB on disconnection")
+
+	clientManager.DeleteWhatsmeowClient(userID)
+	killchannel[userID] <- true
+
+	return nil
+}
+
 // Disconnects from Whatsapp websocket, does not log out device
 func (s *server) Disconnect() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-
 		txtid := r.Context().Value("userinfo").(Values).Get("Id")
-		jid := r.Context().Value("userinfo").(Values).Get("Jid")
-		if clientManager.GetWhatsmeowClient(txtid) == nil {
-			s.Respond(w, r, http.StatusInternalServerError, errors.New("no session"))
+		
+		// Usar função reutilizável
+		err := s.disconnectUser(txtid)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, err)
 			return
 		}
-		if clientManager.GetWhatsmeowClient(txtid).IsConnected() == true {
-			//if clientManager.GetWhatsmeowClient(txtid).IsLoggedIn() == true {
-			log.Info().Str("jid", jid).Msg("Disconnection successfull")
-			_, err := s.db.Exec("UPDATE users SET connected=0 WHERE id=$1", txtid)
-			if err != nil {
-				log.Warn().Str("txtid", txtid).Msg("Could not update connection status in users table")
-			}
-			log.Info().Str("txtid", txtid).Msg("Update DB on disconnection")
 
-			response := map[string]interface{}{"Details": "Disconnected"}
-			responseJson, err := json.Marshal(response)
-
-			clientManager.DeleteWhatsmeowClient(txtid) // mameluco
-			killchannel[txtid] <- true
-
-			if err != nil {
-				s.Respond(w, r, http.StatusInternalServerError, err)
-			} else {
-				s.Respond(w, r, http.StatusOK, string(responseJson))
-			}
-			return
-			//} else {
-			//	log.Warn().Str("jid", jid).Msg("Ignoring disconnect as it was not connected")
-			//	s.Respond(w, r, http.StatusInternalServerError, errors.New("Cannot disconnect because it is not logged in"))
-			//	return
-			//}
+		response := map[string]interface{}{"Details": "Disconnected"}
+		responseJson, err := json.Marshal(response)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, err)
 		} else {
-			log.Warn().Str("jid", jid).Msg("Ignoring disconnect as it was not connected")
-			s.Respond(w, r, http.StatusInternalServerError, errors.New("cannot disconnect because it is not logged in"))
-			return
+			s.Respond(w, r, http.StatusOK, string(responseJson))
 		}
 	}
 }

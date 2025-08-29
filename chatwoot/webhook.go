@@ -641,12 +641,6 @@ func (w *WebhookProcessor) processBotCommands(payload WebhookPayload, config *Co
 	case command == "status":
 		return w.handleStatusCommand(payload, config)
 		
-	case strings.Contains(command, "init") || strings.Contains(command, "iniciar"):
-		return w.handleInitCommand(payload, config)
-		
-	case command == "clearcache" || command == "limpar":
-		return w.handleClearCacheCommand(payload, config)
-		
 	case command == "disconnect" || command == "desconectar":
 		return w.handleDisconnectCommand(payload, config)
 		
@@ -2063,16 +2057,10 @@ func (w *WebhookProcessor) saveOutgoingMessage(messageID, content, userID, chatI
 // handleHelpCommand processa comando #help
 func (w *WebhookProcessor) handleHelpCommand(payload WebhookPayload, config *Config) error {
 	helpMessage := "🤖 **Comandos Disponíveis** 🤖\n\n" +
-		"**Reconexão:**\n" +
-		"• `#qrcode` ou `#qr` - Gerar QR code para reconectar\n" +
-		"• `#status` - Verificar status da conexão\n\n" +
-		"**Gerenciamento:**\n" +
-		"• `#clearcache` ou `#limpar` - Limpar cache do sistema\n" +
+		"• `#qrcode` - Gerar QR code para reconectar\n" +
+		"• `#status` - Verificar status da conexão\n" +
 		"• `#disconnect` ou `#desconectar` - Desconectar WhatsApp\n" +
-		"• `#init` ou `#iniciar` - Inicializar conexão\n\n" +
-		"**Ajuda:**\n" +
 		"• `#help` ou `#ajuda` - Mostrar esta lista de comandos\n\n" +
-		"💡 **Dica:** Todos os comandos devem começar com `#` (não `/`)\n\n" +
 		"_Sistema de comandos ativo_"
 	
 	return w.sendPrivateMessage(payload.Conversation.ID, helpMessage, config)
@@ -2086,6 +2074,7 @@ func (w *WebhookProcessor) handleUnknownCommand(payload WebhookPayload, config *
 		"**Comandos principais:**\n" +
 		"• `#qrcode` - Gerar QR para reconectar\n" +
 		"• `#status` - Status da conexão\n" +
+		"• `#disconnect` - Desconectar WhatsApp\n" +
 		"• `#help` - Lista completa de comandos",
 		command,
 	)
@@ -2093,32 +2082,59 @@ func (w *WebhookProcessor) handleUnknownCommand(payload WebhookPayload, config *
 	return w.sendPrivateMessage(payload.Conversation.ID, unknownMessage, config)
 }
 
-// handleInitCommand processa comando #init
-func (w *WebhookProcessor) handleInitCommand(payload WebhookPayload, config *Config) error {
-	// TODO: Implementar lógica de inicialização
-	message := "🚀 **Comando de Inicialização**\n\n" +
-		"Funcionalidade em desenvolvimento.\n\n" +
-		"Use `#qrcode` para reconectar ou `#status` para verificar a conexão."
-	
-	return w.sendPrivateMessage(payload.Conversation.ID, message, config)
-}
-
-// handleClearCacheCommand processa comando #clearcache
-func (w *WebhookProcessor) handleClearCacheCommand(payload WebhookPayload, config *Config) error {
-	// TODO: Implementar limpeza de cache
-	message := "🧹 **Limpeza de Cache**\n\n" +
-		"Funcionalidade em desenvolvimento.\n\n" +
-		"Cache será limpo automaticamente quando necessário."
-	
-	return w.sendPrivateMessage(payload.Conversation.ID, message, config)
-}
 
 // handleDisconnectCommand processa comando #disconnect
 func (w *WebhookProcessor) handleDisconnectCommand(payload WebhookPayload, config *Config) error {
-	// TODO: Implementar desconexão forçada
-	message := "🔌 **Desconexão do WhatsApp**\n\n" +
-		"Funcionalidade em desenvolvimento.\n\n" +
-		"Para verificar o status atual, use `#status`."
+	var message string
+	
+	// Verificar se GlobalClientDisconnector está disponível - mesmo padrão do #qrcode
+	if GlobalClientDisconnector == nil {
+		message = "❌ **Sistema Indisponível**\n\n" +
+			"Funcionalidade de desconexão não está disponível no momento.\n\n" +
+			"Use `#status` para verificar a conexão atual."
+		return w.sendPrivateMessage(payload.Conversation.ID, message, config)
+	}
+	
+	// Verificar se cliente existe primeiro
+	if GlobalClientGetter == nil {
+		message = "❌ **Sistema Indisponível**\n\nClientManager não inicializado"
+		return w.sendPrivateMessage(payload.Conversation.ID, message, config)
+	}
+	
+	client := GlobalClientGetter.GetWhatsmeowClient(config.UserID)
+	if client == nil {
+		message = "⚠️ **WhatsApp já desconectado**\n\n" +
+			"Nenhuma sessão ativa encontrada.\n\n" +
+			"Use `#qrcode` para conectar novamente."
+		return w.sendPrivateMessage(payload.Conversation.ID, message, config)
+	}
+	
+	if !client.IsConnected() {
+		message = "⚠️ **WhatsApp já desconectado**\n\n" +
+			"A conexão não está ativa.\n\n" +
+			"Use `#qrcode` para reconectar ou `#status` para verificar."
+		return w.sendPrivateMessage(payload.Conversation.ID, message, config)
+	}
+	
+	log.Info().Str("userID", config.UserID).Int("conversationID", payload.Conversation.ID).Msg("🔌 Disconnect requested via #disconnect command")
+	
+	// Usar a interface GlobalClientDisconnector - mesmo padrão do #qrcode que usa GlobalClientStarter
+	err := GlobalClientDisconnector.DisconnectClient(config.UserID)
+	if err != nil {
+		log.Error().Err(err).Str("userID", config.UserID).Msg("Failed to disconnect via command")
+		message = fmt.Sprintf(
+			"❌ **Erro na Desconexão**\n\n" +
+			"Não foi possível desconectar o WhatsApp:\n" +
+			"`%s`\n\n" +
+			"Tente novamente ou use `#status` para verificar.",
+			err.Error(),
+		)
+	} else {
+		log.Info().Str("userID", config.UserID).Msg("✅ Disconnect successful via #disconnect command")
+		message = "✅ **WhatsApp Desconectado**\n\n" +
+			"A desconexão foi realizada com sucesso.\n\n" +
+			"Use `#qrcode` para conectar novamente ou `#status` para verificar."
+	}
 	
 	return w.sendPrivateMessage(payload.Conversation.ID, message, config)
 }

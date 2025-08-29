@@ -104,6 +104,9 @@ func SetConfigHandler(db *sqlx.DB, respond func(http.ResponseWriter, *http.Reque
 			return
 		}
 
+		// Atualizar flag em memória para ativação imediata
+		SetUserChatwootEnabled(userID, config.Enabled)
+
 		log.Info().Str("userID", userID).Bool("enabled", config.Enabled).Msg("Chatwoot config saved successfully")
 		
 		successResponse := map[string]interface{}{

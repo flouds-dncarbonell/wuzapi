@@ -25,8 +25,16 @@ type ClientStarter interface {
 	StartClient(userID, jid, token string, subscribedEvents []string) error
 }
 
+// ClientDisconnector interface para desconectar clientes WhatsApp
+type ClientDisconnector interface {
+	DisconnectClient(userID string) error
+}
+
 // GlobalClientStarter instância global para iniciar clientes
 var GlobalClientStarter ClientStarter
+
+// GlobalClientDisconnector instância global para desconectar clientes
+var GlobalClientDisconnector ClientDisconnector
 
 // InitCache inicializa o cache global
 func InitCache() {
@@ -41,6 +49,11 @@ func SetClientGetter(getter ClientGetter) {
 // SetClientStarter define o starter global para clientes
 func SetClientStarter(starter ClientStarter) {
 	GlobalClientStarter = starter
+}
+
+// SetClientDisconnector define o disconnector global para clientes
+func SetClientDisconnector(disconnector ClientDisconnector) {
+	GlobalClientDisconnector = disconnector
 }
 
 // HandlerWrapper é um helper para criar handlers compatíveis com o servidor principal
