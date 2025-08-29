@@ -265,17 +265,30 @@ func ParseIgnoreJids(ignoreJidsJSON string) []string {
 
 // isGroupID verifica se o ID representa um grupo WhatsApp
 func isGroupID(id string) bool {
-	// Grupos WhatsApp têm IDs longos e não são números de telefone tradicionais
-	// Geralmente são strings longas de números (mais de 15 caracteres)
+	// 1. Verificar se já contém sufixo de grupo
+	if strings.HasSuffix(id, "@g.us") {
+		return true
+	}
+	
+	// 2. Verificar se já contém sufixo individual
+	if strings.HasSuffix(id, "@s.whatsapp.net") {
+		return false
+	}
+	
+	// 3. Para IDs sem sufixo, usar heurísticas:
+	// Grupos têm IDs longos (>15 chars) e podem conter hífens
+	// Exemplo: "5521999187853-1626461861"
 	if len(id) > 15 {
-		// Verificar se é só números (IDs de grupo são puramente numéricos)
+		// Permitir números e hífens (padrão comum de grupos)
 		for _, char := range id {
-			if char < '0' || char > '9' {
+			if !((char >= '0' && char <= '9') || char == '-') {
 				return false
 			}
 		}
 		return true
 	}
+	
+	// 4. IDs curtos são sempre individuais
 	return false
 }
 

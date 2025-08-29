@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -75,6 +77,7 @@ type Attachment struct {
 	DataURL  string `json:"data_url"`
 	FileType string `json:"file_type"`
 	FileName string `json:"file_name"`
+	ThumbURL string `json:"thumb_url"`
 }
 
 // QuotedMessageInfo representa informações de uma mensagem citada
@@ -785,7 +788,8 @@ func (w *WebhookProcessor) processAttachment(attachment Attachment, caption stri
 	case "video":
 		return w.sendVideo(fileData, mimeType, caption, config, chatID, attachment.FileName)
 	case "audio":
-		return w.sendAudio(fileData, mimeType, config, chatID, attachment.FileName)
+		isPTT := w.shouldSendAsPTT(mimeType, attachment.ThumbURL)
+		return w.sendAudio(fileData, mimeType, config, chatID, attachment.FileName, isPTT)
 	case "document":
 		return w.sendDocument(fileData, mimeType, caption, config, chatID, attachment.FileName)
 	default:
@@ -976,8 +980,52 @@ func (w *WebhookProcessor) sendVideo(data []byte, mimeType, caption string, conf
 	return nil
 }
 
+// shouldSendAsPTT determina se um áudio deve ser enviado como PTT (mensagem de voz)
+// PTT é usado para áudios MP3 com thumb_url vazio
+func (w *WebhookProcessor) shouldSendAsPTT(mimeType, thumbURL string) bool {
+	return strings.Contains(mimeType, "audio/mp") && thumbURL == ""
+}
+
+// convertToOpus converte áudio MP3 para OGG Opus usando ffmpeg
+func (w *WebhookProcessor) convertToOpus(audioData []byte) ([]byte, error) {
+	// Criar arquivo temporário para o MP3
+	tmpDir := os.TempDir()
+	inputFile := filepath.Join(tmpDir, fmt.Sprintf("audio_input_%d.mp3", time.Now().UnixNano()))
+	outputFile := filepath.Join(tmpDir, fmt.Sprintf("audio_output_%d.ogg", time.Now().UnixNano()))
+	
+	// Limpar arquivos temporários no final
+	defer func() {
+		os.Remove(inputFile)
+		os.Remove(outputFile)
+	}()
+	
+	// Escrever dados MP3 no arquivo temporário
+	if err := os.WriteFile(inputFile, audioData, 0644); err != nil {
+		return nil, fmt.Errorf("erro ao escrever arquivo temporário: %w", err)
+	}
+	
+	// Converter para OGG Opus usando ffmpeg
+	cmd := exec.Command("ffmpeg", "-y", "-i", inputFile, "-c:a", "libopus", "-b:a", "64k", "-f", "ogg", outputFile)
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("erro na conversão ffmpeg: %w", err)
+	}
+	
+	// Ler arquivo convertido
+	convertedData, err := os.ReadFile(outputFile)
+	if err != nil {
+		return nil, fmt.Errorf("erro ao ler arquivo convertido: %w", err)
+	}
+	
+	log.Info().
+		Int("original_size", len(audioData)).
+		Int("converted_size", len(convertedData)).
+		Msg("Áudio convertido MP3 -> OGG Opus para PTT")
+	
+	return convertedData, nil
+}
+
 // sendAudio envia um áudio para o WhatsApp
-func (w *WebhookProcessor) sendAudio(data []byte, mimeType string, config *Config, chatID, fileName string) error {
+func (w *WebhookProcessor) sendAudio(data []byte, mimeType string, config *Config, chatID, fileName string, isPTT bool) error {
 	client, err := w.getWhatsAppClientWithReconnection(config.UserID)
 	if err != nil {
 		return err
@@ -988,8 +1036,21 @@ func (w *WebhookProcessor) sendAudio(data []byte, mimeType string, config *Confi
 		return fmt.Errorf("erro ao converter chatID: %w", err)
 	}
 
+	// Converter áudio para OGG Opus se for PTT
+	finalData := data
+	finalMimeType := mimeType
+	if isPTT {
+		convertedData, err := w.convertToOpus(data)
+		if err != nil {
+			log.Warn().Err(err).Msg("Falha na conversão de áudio para PTT, enviando original")
+		} else {
+			finalData = convertedData
+			finalMimeType = "audio/ogg; codecs=opus"
+		}
+	}
+
 	// Upload do áudio
-	uploaded, err := client.Upload(context.Background(), data, whatsmeow.MediaAudio)
+	uploaded, err := client.Upload(context.Background(), finalData, whatsmeow.MediaAudio)
 	if err != nil {
 		return fmt.Errorf("erro ao fazer upload do áudio: %w", err)
 	}
@@ -999,10 +1060,11 @@ func (w *WebhookProcessor) sendAudio(data []byte, mimeType string, config *Confi
 		URL:           &uploaded.URL,
 		DirectPath:    &uploaded.DirectPath,
 		MediaKey:      uploaded.MediaKey,
-		Mimetype:      &mimeType,
+		Mimetype:      &finalMimeType,
 		FileEncSHA256: uploaded.FileEncSHA256,
 		FileSHA256:    uploaded.FileSHA256,
 		FileLength:    &uploaded.FileLength,
+		PTT:           &isPTT,
 	}
 
 	message := &waE2E.Message{
@@ -1363,7 +1425,8 @@ func (w *WebhookProcessor) processAttachmentWithQuote(attachment Attachment, cap
 	case "video":
 		return w.sendVideoWithQuote(fileData, mimeType, caption, config, chatID, attachment.FileName, quotedMessage, chatwootMessageID)
 	case "audio":
-		return w.sendAudioWithQuote(fileData, mimeType, config, chatID, attachment.FileName, quotedMessage, chatwootMessageID)
+		isPTT := w.shouldSendAsPTT(mimeType, attachment.ThumbURL)
+		return w.sendAudioWithQuote(fileData, mimeType, config, chatID, attachment.FileName, quotedMessage, chatwootMessageID, isPTT)
 	case "document":
 		return w.sendDocumentWithQuote(fileData, mimeType, caption, config, chatID, attachment.FileName, quotedMessage, chatwootMessageID)
 	default:
@@ -1517,7 +1580,7 @@ func (w *WebhookProcessor) sendVideoWithQuote(data []byte, mimeType, caption str
 	return nil
 }
 
-func (w *WebhookProcessor) sendAudioWithQuote(data []byte, mimeType string, config *Config, chatID, fileName string, quotedMessage *QuotedMessageInfo, chatwootMessageID *int) error {
+func (w *WebhookProcessor) sendAudioWithQuote(data []byte, mimeType string, config *Config, chatID, fileName string, quotedMessage *QuotedMessageInfo, chatwootMessageID *int, isPTT bool) error {
 	client := GlobalClientGetter.GetWhatsmeowClient(config.UserID)
 	if client == nil {
 		return fmt.Errorf("cliente WhatsApp não encontrado")
@@ -1528,8 +1591,21 @@ func (w *WebhookProcessor) sendAudioWithQuote(data []byte, mimeType string, conf
 		return fmt.Errorf("erro ao converter chatID: %w", err)
 	}
 
+	// Converter áudio para OGG Opus se for PTT
+	finalData := data
+	finalMimeType := mimeType
+	if isPTT {
+		convertedData, err := w.convertToOpus(data)
+		if err != nil {
+			log.Warn().Err(err).Msg("Falha na conversão de áudio para PTT, enviando original")
+		} else {
+			finalData = convertedData
+			finalMimeType = "audio/ogg; codecs=opus"
+		}
+	}
+
 	// Upload do áudio
-	uploaded, err := client.Upload(context.Background(), data, whatsmeow.MediaAudio)
+	uploaded, err := client.Upload(context.Background(), finalData, whatsmeow.MediaAudio)
 	if err != nil {
 		return fmt.Errorf("erro ao fazer upload do áudio: %w", err)
 	}
@@ -1539,10 +1615,11 @@ func (w *WebhookProcessor) sendAudioWithQuote(data []byte, mimeType string, conf
 		URL:           &uploaded.URL,
 		DirectPath:    &uploaded.DirectPath,
 		MediaKey:      uploaded.MediaKey,
-		Mimetype:      &mimeType,
+		Mimetype:      &finalMimeType,
 		FileEncSHA256: uploaded.FileEncSHA256,
 		FileSHA256:    uploaded.FileSHA256,
 		FileLength:    &uploaded.FileLength,
+		PTT:           &isPTT,
 	}
 
 	// Adicionar quote se disponível
